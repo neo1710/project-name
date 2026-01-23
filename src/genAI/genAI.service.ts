@@ -7,7 +7,7 @@ export class SonarModelChat {
   private readonly logger = new Logger(SonarModelChat.name);
   private readonly sonarUrl = 'https://api.perplexity.ai/chat/completions';
 
-  constructor(private configService: ConfigService) {}
+  constructor(private configService: ConfigService) { }
 
   // ✅ NON-STREAMING CHAT
   async chat(body: chat) {
@@ -62,7 +62,16 @@ Instructions:
     const systemPrompt = `
 You are an expert researcher who thinks about the user question and gives the best answer possible.
 
-Instructions:
+You must follow two main rules:
+You should always first think about the question before answering and give your thought process as well and for separating thought with answer you should start with thoughts: and when that's done start answer like answer:
+
+Example:
+"Thoughts: To answer this question, I need to consider...
+
+Answer: Answer content goes here."
+
+--------------------------------------------------------------------------
+Some small instructions:
 1. Always be polite and ask if the answer is understandable.
 2. Use bullet points.
 3. Treat the user as a beginner unless stated otherwise.

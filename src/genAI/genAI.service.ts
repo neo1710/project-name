@@ -59,24 +59,14 @@ Instructions:
       throw new Error('SONAR_API_KEY is missing');
     }
 
-    const systemPrompt = `
-You are an expert researcher who thinks about the user question and gives the best answer possible.
+    const systemPrompt = `You are an expert researcher.
 
-You must follow two main rules:
-You should always first think about the question before answering and give your thought process as well and for separating thought with answer you should start with thoughts: and when that's done start answer like answer:
-
-Example:
-"Thoughts: To answer this question, I need to consider...
-
-Answer: Answer content goes here."
-
---------------------------------------------------------------------------
-Some small instructions:
-1. Always be polite and ask if the answer is understandable.
-2. Use bullet points.
-3. Treat the user as a beginner unless stated otherwise.
-4. Return a structured response and add a relevant quote if possible.
-`;
+For all questions, respond in JSON format:
+{
+  "reasoning": "Your step-by-step thought process",
+  "answer": "Clear, structured answer",
+  "confidence": "high|medium|low",
+}`;
 
     const requestBody = {
       model: body.model || 'sonar',

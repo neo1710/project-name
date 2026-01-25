@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { chat } from './dto/chatDto';
+import { chatAgents } from './agents/agents';
 
 @Injectable()
 export class SonarModelChat {
   private readonly logger = new Logger(SonarModelChat.name);
   private readonly sonarUrl = 'https://api.perplexity.ai/chat/completions';
 
-  constructor(private configService: ConfigService) { }
+  constructor(private agents: chatAgents, private configService: ConfigService) { }
 
   // ✅ NON-STREAMING CHAT
   async chat(body: chat) {
@@ -59,6 +60,14 @@ Instructions:
       throw new Error('SONAR_API_KEY is missing');
     }
 
+   const bodyAgent = body.agent? true : false;
+   let agentPrompt = '';
+
+   if (bodyAgent) {
+     this.logger.log(`Using agent: ${body.agent}`);
+     agentPrompt = await this.agents[`${body.agent}`]();
+   }
+
     const systemPrompt = `You are an expert researcher.
 
 For all questions, respond in JSON format:
@@ -71,7 +80,7 @@ For all questions, respond in JSON format:
     const requestBody = {
       model: body.model || 'sonar',
       messages: [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: bodyAgent? agentPrompt : systemPrompt },
         ...body.messages,
       ],
       stream: true,

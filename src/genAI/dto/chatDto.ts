@@ -20,4 +20,7 @@ export class chat{
     @IsBoolean()
     stream: boolean;
 
+    @IsString()
+    agent?: string;
+
 }

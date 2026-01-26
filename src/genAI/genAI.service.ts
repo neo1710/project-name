@@ -61,13 +61,16 @@ Instructions:
       throw new Error('SONAR_API_KEY is missing');
     }
 
-   const bodyAgent = body.agent? true : false;
-   let agentPrompt = '';
-
-   if (bodyAgent) {
-     this.logger.log(`Using agent: ${body.agent}`);
-     agentPrompt = await this.agents[`${body.agent}`]();
-   }
+    const bodyAgent = body.agent ? true : false;
+    let agentPrompt = '';
+    if (bodyAgent && body.agent === 'ragAgent') {
+      this.logger.log(`Using RAG agent: ${body.agent}`);
+      this.logger.log(body, body.messages[body.messages.length - 1].content);
+      agentPrompt = await this.agents.ragAgent(body.messages[body.messages.length - 1].content);
+    } else if (bodyAgent) {
+      this.logger.log(`Using agent: ${body.agent}`);
+      agentPrompt = await this.agents[`${body.agent}`]();
+    }
 
     const systemPrompt = `You are an expert researcher.
 
@@ -81,7 +84,7 @@ For all questions, respond in JSON format:
     const requestBody = {
       model: body.model || 'sonar',
       messages: [
-        { role: 'system', content: bodyAgent? agentPrompt : systemPrompt },
+        { role: 'system', content: bodyAgent ? agentPrompt : systemPrompt },
         ...body.messages,
       ],
       stream: true,
@@ -126,9 +129,10 @@ For all questions, respond in JSON format:
 
   async ragStore(body: ragStore) {
     this.logger.log('RAG Store function executed');
+    const embeddingApi = this.configService.get<string>('EMBEDDING_API') || 'http://localhost:8001';
 
     try {
-     const response= await fetch(`http://localhost:8001/store`, {
+      const response = await fetch(`${embeddingApi}/store`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -141,8 +145,8 @@ For all questions, respond in JSON format:
       }
       return response.json();
     } catch (error) {
-      return {  error: 'Error storing RAG data', details: error };
+      return { error: 'Error storing RAG data', details: error };
     }
-    
+
   }
 }

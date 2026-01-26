@@ -8,7 +8,7 @@ export class chatAgents {
 
     constructor(private configService: ConfigService) { }
 
-    async critiqueAgent() {    
+    async critiqueAgent() {
 
         this.logger.log('Critique agent function executed');
 
@@ -23,5 +23,33 @@ export class chatAgents {
         `;
 
         return critiquePrompt;
+    }
+
+    async ragAgent(query: string) {
+        this.logger.log('RAG agent function executed', query);
+        const embeddingApi = this.configService.get<string>('EMBEDDING_API');
+        try {
+            const response = await fetch(`${embeddingApi}/search?query=${query}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`HTTP ${response.status}: ${err}`);
+            }
+            const data = await response.json();
+            const ragPrompt = `
+             You are a RAG agent you have to respond the user query based on these retrieved contexts.
+                Contexts: ${data.results}
+            `;
+            return ragPrompt;
+        } catch (error) {
+            this.logger.error('Error in RAG agent:', error);
+            throw error;
+        }
+
+
     }
 }

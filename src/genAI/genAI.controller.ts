@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Res } from "@nestjs/common";
 import { SonarModelChat } from "./genAI.service";
 import { chat } from "./dto/chatDto";
+import { ragStore } from "./dto/ragDto";
 
 
 
@@ -22,5 +23,10 @@ export class GenAIController {
     // Normal JSON response (NestJS handles it automatically)
     const data = await this.sonarModelChat.chat(body);
     return res.json(data);
+    }
+
+    @Post('ragStore')
+    async ragStore(@Body() body: ragStore) {
+        return this.sonarModelChat.ragStore(body);
     }
 }

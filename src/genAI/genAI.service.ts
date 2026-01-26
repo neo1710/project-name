@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { chat } from './dto/chatDto';
+import { ragStore } from './dto/ragDto';
 import { chatAgents } from './agents/agents';
 
 @Injectable()
@@ -121,5 +122,27 @@ For all questions, respond in JSON format:
       reader.releaseLock();
       res.end();
     }
+  }
+
+  async ragStore(body: ragStore) {
+    this.logger.log('RAG Store function executed');
+
+    try {
+     const response= await fetch(`http://localhost:8001/store`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`HTTP ${response.status}: ${err}`);
+      }
+      return response.json();
+    } catch (error) {
+      return {  error: 'Error storing RAG data', details: error };
+    }
+    
   }
 }

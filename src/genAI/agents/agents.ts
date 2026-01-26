@@ -41,7 +41,7 @@ export class chatAgents {
             }
             const data = await response.json();
             const ragPrompt = `
-             You are a RAG agent you have to respond the user query based on these retrieved contexts.
+             You are a RAG agent you have to respond the user query strictly based on these retrieved contexts.
                 Contexts: ${data.results}
             `;
             return ragPrompt;

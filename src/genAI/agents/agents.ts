@@ -41,8 +41,14 @@ export class chatAgents {
             }
             const data = await response.json();
             const ragPrompt = `
-             You are a RAG agent you have to respond the user query strictly based on these retrieved contexts.
+             You are a RAG agent you have to respond the user query strictly based on only these retrieved contexts. If no context is retrieved respond with "No relevant information found".
                 Contexts: ${data.results}
+                Respond in JSON:
+                    {
+                    "reasoning": "...",
+                    "answer": "...",
+                    "confidence": "high|medium|low"
+                    }
             `;
             return ragPrompt;
         } catch (error) {

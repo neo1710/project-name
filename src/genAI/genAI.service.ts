@@ -128,7 +128,7 @@ For all questions, respond in JSON format:
   }
 
   async ragStore(body: ragStore) {
-    this.logger.log('RAG Store function executed');
+    this.logger.log('RAG Store function executed', body);
     const embeddingApi = this.configService.get<string>('EMBEDDING_API') || 'http://localhost:8001';
 
     try {

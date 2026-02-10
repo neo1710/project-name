@@ -65,8 +65,7 @@ Instructions:
     let agentPrompt = '';
     if (bodyAgent && body.agent === 'ragAgent') {
       this.logger.log(`Using RAG agent: ${body.agent}`);
-      this.logger.log(body, body.messages[body.messages.length - 1].content);
-      agentPrompt = await this.agents.ragAgent(body.messages[body.messages.length - 1].content);
+      agentPrompt = await this.agents.ragAgent(body.messages[body.messages.length - 1].content, body.messages);
     } else if (bodyAgent) {
       this.logger.log(`Using agent: ${body.agent}`);
       agentPrompt = await this.agents[`${body.agent}`]();

@@ -1,5 +1,6 @@
 import { Global, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { conversations } from '../dto/chatDto';
 
 @Injectable() @Global()
 export class chatAgents {
@@ -25,10 +26,13 @@ export class chatAgents {
         return critiquePrompt;
     }
 
-    async ragAgent(query: string) {
+    async ragAgent(query: string, messages: conversations[]) {
         this.logger.log('RAG agent function executed', query);
         const embeddingApi = this.configService.get<string>('EMBEDDING_API');
         try {
+
+            // const perfectQuery = ;
+
             const response = await fetch(`${embeddingApi}/search?query=${query}`, {
                 method: 'POST',
                 headers: {

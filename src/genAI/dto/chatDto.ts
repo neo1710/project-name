@@ -2,7 +2,7 @@ import { Prop } from "@nestjs/mongoose";
 import { IsBoolean, IsString, isString } from "class-validator";
 
 
-class conversations{
+export class conversations{
     @IsString()
     role: string;
 

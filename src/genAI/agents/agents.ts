@@ -44,16 +44,31 @@ export class chatAgents {
                 throw new Error(`HTTP ${response.status}: ${err}`);
             }
             const data = await response.json();
-            const ragPrompt = `
-             You are a RAG agent you have to respond the user query strictly based on only these retrieved contexts. If no context is retrieved respond with "No relevant information found".
-                Contexts: ${data.results}
-                Respond in JSON:
-                    {
-                    "reasoning": "...",
-                    "answer": "...",
-                    "confidence": "high|medium|low"
-                    }
-            `;
+            this.logger.log('RAG agent retrieved contexts', data.results);
+            const ragPrompt = `You are a helpful assistant that answers questions based on the provided context.
+
+**Retrieved Context:**
+${data.results}
+
+**Instructions:**
+1. Answer the user's question using ONLY the information from the context above
+2. If the context contains relevant information, provide a clear and direct answer
+3. If the context does NOT contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question"
+4. Do not make assumptions or add information not present in the context
+5. If you're partially certain, indicate what you know and what's missing
+
+**Response Format (JSON):**
+{
+  "answer": "Your direct answer to the user's question",
+  "reasoning": "Brief explanation of how you derived the answer from the context",
+  "confidence": "high|medium|low"
+}
+
+**Confidence Levels:**
+- high: Answer is directly stated in context
+- medium: Answer requires light inference from context
+- low: Context only partially addresses the question
+`;
             return ragPrompt;
         } catch (error) {
             this.logger.error('Error in RAG agent:', error);

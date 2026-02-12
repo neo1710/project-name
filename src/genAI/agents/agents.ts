@@ -1,13 +1,14 @@
 import { Global, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { conversations } from '../dto/chatDto';
+import { SonarApiTools } from '../tools/sonarApiTools';
 
 @Injectable() @Global()
 export class chatAgents {
     private readonly logger = new Logger(chatAgents.name);
     private readonly sonarUrl = 'https://api.perplexity.ai/chat/completions';
 
-    constructor(private configService: ConfigService) { }
+    constructor(private sonarApiTools: SonarApiTools, private configService: ConfigService) { }
 
     async critiqueAgent() {
 
@@ -31,7 +32,7 @@ export class chatAgents {
         const embeddingApi = this.configService.get<string>('EMBEDDING_API');
         try {
 
-            // const perfectQuery = ;
+            const perfectQuery = await this.sonarApiTools.queryRewriter(messages);
 
             const response = await fetch(`${embeddingApi}/search?query=${query}`, {
                 method: 'POST',
@@ -45,29 +46,40 @@ export class chatAgents {
             }
             const data = await response.json();
             this.logger.log('RAG agent retrieved contexts', data.results);
-            const ragPrompt = `You are a helpful assistant that answers questions based on the provided context.
+            const ragPrompt = `You are a retrieval-based answer engine. Your ONLY source of truth is the context below.
 
 **Retrieved Context:**
 ${data.results}
 
-**Instructions:**
-1. Answer the user's question using ONLY the information from the context above
-2. If the context contains relevant information, provide a clear and direct answer
-3. If the context does NOT contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question"
-4. Do not make assumptions or add information not present in the context
-5. If you're partially certain, indicate what you know and what's missing
+---
 
-**Response Format (JSON):**
+**STRICT RULES — NO EXCEPTIONS:**
+- Answer using ONLY the exact information present in the retrieved context above
+- Do NOT use any research any external knowledge only use the retrieved context from above nothing else Strictly.
+- Do NOT infer, extrapolate, or reason beyond what is explicitly stated
+- Do NOT paraphrase in ways that introduce new meaning
+- If the context is empty, irrelevant, or insufficient → return "insufficient_context"
+
+---
+
+**Response Format (JSON only — no prose outside this block):**
 {
-  "answer": "Your direct answer to the user's question",
-  "reasoning": "Brief explanation of how you derived the answer from the context",
-  "confidence": "high|medium|low"
+  "answer": "Direct answer using only context verbatim or near-verbatim, OR null if context is insufficient",
+  "reasoning": "Show your steps in the context that led to the answer, quoting specific sentences. If insufficient context, explain what is missing.",
+  "confidence": "high|low|insufficient_context",
 }
 
 **Confidence Levels:**
-- high: Answer is directly stated in context
-- medium: Answer requires light inference from context
-- low: Context only partially addresses the question
+- high: Answer is explicitly and unambiguously stated in the context
+- low: Context mentions the topic but does not fully answer the question
+- insufficient_context: Context does not contain the information needed to answer
+
+**Examples of what NOT to do:**
+- Do NOT say "Based on my knowledge..." 
+- Do NOT say "Generally speaking..."
+- Do NOT fill gaps with assumed facts
+- Also use the context to related question like if asked about Neeraj and Context has info about Neeraj Dubey then also you can answer.
+- Do NOT answer if context is empty or \`${data.results}\` is undefined/null
 `;
             return ragPrompt;
         } catch (error) {

@@ -32,7 +32,7 @@ export class chatAgents {
         const embeddingApi = this.configService.get<string>('EMBEDDING_API');
         try {
 
-            const perfectQuery = await this.sonarApiTools.queryRewriter(messages);
+            // const perfectQuery = await this.sonarApiTools.queryRewriter(messages);
 
             const response = await fetch(`${embeddingApi}/search?query=${query}`, {
                 method: 'POST',
@@ -49,7 +49,7 @@ export class chatAgents {
             const ragPrompt = `You are a retrieval-based answer engine. Your ONLY source of truth is the context below.
 
 **Retrieved Context:**
-${data.results}
+Retrieved results from rag will be provided with the user query. Use ONLY this context to answer the question. Do NOT use any external knowledge or assumptions.
 
 ---
 
@@ -79,9 +79,14 @@ ${data.results}
 - Do NOT say "Generally speaking..."
 - Do NOT fill gaps with assumed facts
 - Also use the context to related question like if asked about Neeraj and Context has info about Neeraj Dubey then also you can answer.
-- Do NOT answer if context is empty or \`${data.results}\` is undefined/null
+- Do NOT answer if context is empty or is undefined/null
 `;
-            return ragPrompt;
+            return {
+                prompt:ragPrompt,
+                ragQueryWithContext: `User query: ${query}
+                retrieved context: ${data.results}
+                `
+            };
         } catch (error) {
             this.logger.error('Error in RAG agent:', error);
             throw error;

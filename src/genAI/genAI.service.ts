@@ -69,6 +69,7 @@ Instructions:
       const ragResult = await this.agents.ragAgent(body.messages[body.messages.length - 1].content, body.messages);
       agentPrompt = ragResult.prompt;
       userQuery = ragResult.ragQueryWithContext;
+      body.messages[body.messages.length - 1].content = userQuery;
     } else if (bodyAgent) {
       this.logger.log(`Using agent: ${body.agent}`);
       agentPrompt = await this.agents[`${body.agent}`]();

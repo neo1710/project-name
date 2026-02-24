@@ -6,7 +6,7 @@ import { SonarApiTools } from '../tools/sonarApiTools';
 @Injectable() @Global()
 export class chatAgents {
     private readonly logger = new Logger(chatAgents.name);
-    private readonly sonarUrl = 'https://api.perplexity.ai/chat/completions';
+    private readonly sonarUrl = "https://api.mistral.ai/v1/chat/completions";
 
     constructor(private sonarApiTools: SonarApiTools, private configService: ConfigService) { }
 
@@ -32,7 +32,8 @@ export class chatAgents {
         const embeddingApi = this.configService.get<string>('EMBEDDING_API');
         try {
 
-            // const perfectQuery = await this.sonarApiTools.queryRewriter(messages);
+            const perfectQuery = await this.sonarApiTools.queryRewriter(messages);
+            this.logger.log('RAG agent got rewritten query', perfectQuery);
 
             const response = await fetch(`${embeddingApi}/search?query=${query}`, {
                 method: 'POST',

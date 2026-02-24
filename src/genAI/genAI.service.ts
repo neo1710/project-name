@@ -7,7 +7,7 @@ import { chatAgents } from './agents/agents';
 @Injectable()
 export class SonarModelChat {
   private readonly logger = new Logger(SonarModelChat.name);
-  private readonly sonarUrl = 'https://api.perplexity.ai/chat/completions';
+  private readonly sonarUrl = "https://api.mistral.ai/v1/chat/completions";
 
   constructor(private agents: chatAgents, private configService: ConfigService) { }
 

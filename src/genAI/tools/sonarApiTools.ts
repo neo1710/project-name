@@ -6,7 +6,7 @@ import { ConfigService } from "@nestjs/config/dist/config.service";
 @Injectable() @Global()
 export class SonarApiTools {
   private readonly logger = new Logger(SonarApiTools.name);
-  private readonly sonarUrl = 'https://api.perplexity.ai/chat/completions';
+  private readonly sonarUrl = "https://api.mistral.ai/v1/chat/completions";
 
   constructor(private configService: ConfigService) { }
 
@@ -51,7 +51,7 @@ Correct: ["Who is neeraj?"] ✅
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: 'sonar',
+          model: 'mistral-small-latest',
           messages: [
             { role: 'system', content: rewriterPrompt },
             ...messages,

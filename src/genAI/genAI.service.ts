@@ -13,9 +13,9 @@ export class SonarModelChat {
 
   // ✅ NON-STREAMING CHAT
   async chat(body: chat) {
-    const apiKey = this.configService.get<string>('SONAR_API_KEY');
+    const apiKey = this.configService.get<string>('MYSTRAL_API_KEY');
     if (!apiKey) {
-      throw new Error('SONAR_API_KEY is missing');
+      throw new Error('MYSTRAL_API_KEY is missing');
     }
 
     const systemPrompt = `
@@ -56,9 +56,9 @@ Instructions:
 
   // ✅ STREAMING CHAT (SSE)
   async chatStream(body: chat, res: any) {
-    const apiKey = this.configService.get<string>('SONAR_API_KEY');
+    const apiKey = this.configService.get<string>('MYSTRAL_API_KEY');
     if (!apiKey) {
-      throw new Error('SONAR_API_KEY is missing');
+      throw new Error('MYSTRAL_API_KEY is missing');
     }
 
     const bodyAgent = body.agent ? true : false;

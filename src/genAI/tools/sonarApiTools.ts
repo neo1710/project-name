@@ -11,7 +11,7 @@ export class SonarApiTools {
   constructor(private configService: ConfigService) { }
 
   async queryRewriter(messages: conversations[]) {
-    const apiKey = this.configService.get<string>('SONAR_API_KEY');
+    const apiKey = this.configService.get<string>('MYSTRAL_API_KEY');
     const rewriterPrompt = `
 You are a query rewriter. You take the user query and rewrite it to be more clear and concise for RAG retrieval.
 

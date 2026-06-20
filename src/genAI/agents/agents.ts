@@ -35,16 +35,53 @@ export class chatAgents {
             const perfectQuery = await this.sonarApiTools.queryRewriter(messages);
             this.logger.log('RAG agent got rewritten query', perfectQuery);
 
-            const response = await fetch(`${embeddingApi}/search?query=${query}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            });
-            if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`HTTP ${response.status}: ${err}`);
+            if (!embeddingApi) {
+                throw new Error('EMBEDDING_API is missing or not configured');
             }
+
+            let queryToUse = query;
+            if (perfectQuery) {
+                try {
+                    const parsed = JSON.parse(perfectQuery);
+                    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'string') {
+                        queryToUse = parsed[0];
+                    } else if (typeof parsed === 'string') {
+                        queryToUse = parsed;
+                    } else {
+                        queryToUse = perfectQuery;
+                    }
+                } catch {
+                    queryToUse = perfectQuery;
+                }
+            }
+
+            const searchUrl = `${embeddingApi}/search?query=${encodeURIComponent(queryToUse)}`;
+            let response: Response | null = null;
+            const maxRetries = 3;
+
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                response = await fetch(searchUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                if (response.status !== 429) {
+                    break;
+                }
+
+                const retryAfterHeader = response.headers.get('Retry-After');
+                const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 1000 * attempt;
+                this.logger.warn(`RAG search rate limited, retrying attempt ${attempt}/${maxRetries} after ${retryAfterMs}ms`);
+                await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+            }
+
+            if (!response || !response.ok) {
+                const err = response ? await response.text() : 'No response received';
+                throw new Error(`HTTP ${response?.status ?? 'UNKNOWN'}: ${err}`);
+            }
+
             const data = await response.json();
             this.logger.log('RAG agent retrieved contexts', data.results);
             const ragPrompt = `You are a retrieval-based answer engine. Your ONLY source of truth is the context below.

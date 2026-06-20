@@ -63,7 +63,7 @@ Instructions:
 
     const bodyAgent = body.agent ? true : false;
     let agentPrompt = '';
-    let userQuery= body.messages[body.messages.length - 1].content;
+    let userQuery = body.messages[body.messages.length - 1].content;
     if (bodyAgent && body.agent === 'ragAgent') {
       this.logger.log(`Using RAG agent: ${body.agent}`);
       const ragResult = await this.agents.ragAgent(body.messages[body.messages.length - 1].content, body.messages);
@@ -131,25 +131,66 @@ For all questions, respond in JSON format:
   }
 
   async ragStore(body: ragStore) {
-    this.logger.log('RAG Store function executed', body);
+    this.logger.log('RAG Store function executed', JSON.stringify(body));
     const embeddingApi = this.configService.get<string>('EMBEDDING_API') || 'http://localhost:8001';
 
+    const maxRetries = 3;
+    const timeoutMs = 10000; // 10s per request
+
+    // Build a safe payload that the embedding service expects (fallback to { doc })
+    let payload: any;
     try {
-      const response = await fetch(`${embeddingApi}/store`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`HTTP ${response.status}: ${err}`);
-      }
-      return response.json();
-    } catch (error) {
-      return { error: 'Error storing RAG data', details: error };
+      const anyBody: any = body as any;
+      if (anyBody && anyBody.doc) payload = anyBody;
+      else if (anyBody && anyBody.text) payload = { doc: anyBody.text };
+      else if (typeof anyBody === 'string') payload = { doc: anyBody };
+      else payload = { doc: anyBody };
+    } catch (e) {
+      payload = { doc: JSON.stringify(body) };
     }
+
+    const url = `${embeddingApi.replace(/\/$/, '')}/store`;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout as any);
+
+        const text = await response.text();
+        if (!response.ok) {
+          this.logger.error(`ragStore failed attempt ${attempt}: ${response.status} ${response.statusText} - ${text}`);
+          if (attempt < maxRetries) {
+            await new Promise((r) => setTimeout(r, 500 * attempt));
+            continue;
+          }
+          return { ok: false, status: response.status, error: text };
+        }
+
+        try {
+          const json = JSON.parse(text);
+          return { ok: true, data: json };
+        } catch {
+          return { ok: true, data: text };
+        }
+      } catch (err: any) {
+        clearTimeout(timeout as any);
+        const isAbort = err && err.name === 'AbortError';
+        this.logger.error(`ragStore exception attempt ${attempt}: ${isAbort ? 'timeout' : err}`, err);
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+          continue;
+        }
+        return { ok: false, error: isAbort ? 'timeout' : 'exception', details: err };
+      }
+    }
+    return { ok: false, error: 'unreachable' };
 
   }
 }

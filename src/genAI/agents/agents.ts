@@ -122,7 +122,7 @@ Retrieved results from rag will be provided with the user query. Use ONLY this c
             return {
                 prompt:ragPrompt,
                 ragQueryWithContext: `User query: ${query}
-                retrieved context: ${data.results}
+                retrieved context: ${data.results[0].text}
                 `
             };
         } catch (error) {

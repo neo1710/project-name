@@ -4,6 +4,7 @@ import { AppService } from './app.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { GenAIModule } from './genAI/genAI.module';
+import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 
 @Module({
   imports: [
@@ -15,11 +16,13 @@ import { GenAIModule } from './genAI/genAI.module';
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => {
         const uri = configService.get<string>('MONGODB_DATABASE_URI') || 'mongodb://localhost:27017/mydatabase';
-        console.log(`Connecting to MongoDB at ${uri}`);
+        // Do not log the connection string: it commonly contains credentials.
+        console.log('Connecting to MongoDB');
         return { uri };
       },
     }),
       GenAIModule,
+      KnowledgeBaseModule,
   ],
   controllers: [AppController],
   providers: [AppService],

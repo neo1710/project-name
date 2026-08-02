@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
 import { CreateUploadDto } from './dto/create-upload.dto';
+import { CreateFolderDto } from './dto/create-folder.dto';
 import { SearchKnowledgeBaseDto } from './dto/search-knowledge-base.dto';
 import { StoreDocumentDto } from './dto/store-document.dto';
 import { KnowledgeBaseService } from './knowledge-base.service';
@@ -11,6 +12,16 @@ export class KnowledgeBaseController {
   @Post('documents/upload-url')
   createUploadUrl(@Body() body: CreateUploadDto) {
     return this.knowledgeBase.createUploadUrl(body);
+  }
+
+  @Post('folders')
+  createFolder(@Body() body: CreateFolderDto) {
+    return this.knowledgeBase.createFolder(body);
+  }
+
+  @Post('folders/:folderId/documents/upload-url')
+  createFolderUploadUrl(@Param('folderId') folderId: string, @Body() body: CreateUploadDto) {
+    return this.knowledgeBase.createUploadUrl(body, folderId);
   }
 
   @Post('documents/:documentId/uploaded')
@@ -41,6 +52,11 @@ export class KnowledgeBaseController {
   @Get('documents/:documentId')
   getDocument(@Param('documentId') documentId: string) {
     return this.knowledgeBase.getDocument(documentId);
+  }
+
+  @Get('documents/:documentId/download-url')
+  createDownloadUrl(@Param('documentId') documentId: string) {
+    return this.knowledgeBase.createDownloadUrl(documentId);
   }
 
   @Get('documents/:documentId/chunks')

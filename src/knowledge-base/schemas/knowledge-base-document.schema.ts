@@ -23,6 +23,9 @@ export class KnowledgeBaseDocument {
   @Prop({ required: true })
   s3Key: string;
 
+  @Prop({ index: true })
+  folderId?: string;
+
   @Prop({ enum: ['pending_upload', 'uploaded', 'processing', 'ready', 'failed'], default: 'pending_upload', index: true })
   status: string;
 

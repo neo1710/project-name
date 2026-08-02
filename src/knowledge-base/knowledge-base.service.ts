@@ -6,14 +6,16 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Model } from 'mongoose';
 import { randomUUID } from 'crypto';
 import { CreateUploadDto } from './dto/create-upload.dto';
+import { CreateFolderDto } from './dto/create-folder.dto';
 import { SearchKnowledgeBaseDto } from './dto/search-knowledge-base.dto';
 import { StoreDocumentDto } from './dto/store-document.dto';
 import { KnowledgeBaseDocument, KnowledgeBaseDocumentDocument } from './schemas/knowledge-base-document.schema';
+import { KnowledgeBaseFolder, KnowledgeBaseFolderDocument } from './schemas/knowledge-base-folder.schema';
 
 interface QdrantChunkPoint {
   id: string;
@@ -37,20 +39,32 @@ export class KnowledgeBaseService {
   constructor(
     @InjectModel(KnowledgeBaseDocument.name)
     private readonly documents: Model<KnowledgeBaseDocument>,
+    @InjectModel(KnowledgeBaseFolder.name)
+    private readonly folders: Model<KnowledgeBaseFolder>,
     private readonly config: ConfigService,
   ) {
     this.s3 = new S3Client({ region: this.config.get<string>('AWS_REGION') });
   }
 
-  async createUploadUrl(input: CreateUploadDto) {
+  async createUploadUrl(input: CreateUploadDto, folderId?: string) {
     const bucket = this.config.get<string>('AWS_S3_KNOWLEDGE_BASE_BUCKET');
     if (!bucket) {
       throw new ServiceUnavailableException('AWS_S3_KNOWLEDGE_BASE_BUCKET is not configured');
     }
 
+    let folder: KnowledgeBaseFolderDocument | undefined;
+    if (folderId) {
+      folder = await this.findFolder(folderId);
+      if (folder.ownerId !== input.ownerId) {
+        throw new NotFoundException(`Knowledge-base folder ${folderId} was not found for this owner`);
+      }
+    }
+
     const documentId = randomUUID();
     const safeFilename = input.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const s3Key = `knowledge-base/${input.ownerId}/${documentId}/${safeFilename}`;
+    const s3Key = folder
+      ? `knowledge-base/${input.ownerId}/folders/${folder.folderId}/${documentId}/${safeFilename}`
+      : `knowledge-base/${input.ownerId}/${documentId}/${safeFilename}`;
     const document = await this.documents.create({
       documentId,
       ownerId: input.ownerId,
@@ -58,6 +72,7 @@ export class KnowledgeBaseService {
       originalFilename: input.filename,
       contentType: input.contentType,
       s3Key,
+      folderId: folder?.folderId,
       metadata: input.metadata || {},
     });
 
@@ -82,6 +97,40 @@ export class KnowledgeBaseService {
     } catch (error) {
       await this.documents.findByIdAndDelete(document._id);
       throw new ServiceUnavailableException(`Could not create S3 upload URL: ${this.errorMessage(error)}`);
+    }
+  }
+
+  async createFolder(input: CreateFolderDto) {
+    const folderId = randomUUID();
+    const folder = await this.folders.create({
+      folderId,
+      ownerId: input.ownerId,
+      name: input.name.trim(),
+    });
+    return this.serialize(folder);
+  }
+
+  async createDownloadUrl(documentId: string) {
+    const document = await this.findDocument(documentId);
+    const bucket = this.config.get<string>('AWS_S3_KNOWLEDGE_BASE_BUCKET');
+    if (!bucket) {
+      throw new ServiceUnavailableException('AWS_S3_KNOWLEDGE_BASE_BUCKET is not configured');
+    }
+
+    try {
+      const url = await getSignedUrl(
+        this.s3,
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: document.s3Key,
+          ResponseContentType: document.contentType,
+          ResponseContentDisposition: `inline; filename="${this.contentDispositionFilename(document.originalFilename)}"`,
+        }),
+        { expiresIn: 300 },
+      );
+      return { document: this.serialize(document), url, expiresInSeconds: 300 };
+    } catch (error) {
+      throw new ServiceUnavailableException(`Could not create S3 document URL: ${this.errorMessage(error)}`);
     }
   }
 
@@ -201,6 +250,12 @@ export class KnowledgeBaseService {
     return document;
   }
 
+  private async findFolder(folderId: string): Promise<KnowledgeBaseFolderDocument> {
+    const folder = await this.folders.findOne({ folderId });
+    if (!folder) throw new NotFoundException(`Knowledge-base folder ${folderId} was not found`);
+    return folder;
+  }
+
   private async updateStatus(documentId: string, status: string) {
     const document = await this.documents.findOneAndUpdate({ documentId }, { status }, { new: true });
     if (!document) throw new NotFoundException(`Knowledge-base document ${documentId} was not found`);
@@ -227,5 +282,9 @@ export class KnowledgeBaseService {
 
   private errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  private contentDispositionFilename(filename: string): string {
+    return filename.replace(/[\\\r\n"]/g, '_');
   }
 }

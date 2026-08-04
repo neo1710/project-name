@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Res } from "@nestjs/common";
+import { Controller, Get, Post, Body, Res } from "@nestjs/common";
 import { SonarModelChat } from "./genAI.service";
 import { chat } from "./dto/chatDto";
 import { ragStore } from "./dto/ragDto";
@@ -23,6 +23,12 @@ export class GenAIController {
     // Normal JSON response (NestJS handles it automatically)
     const data = await this.sonarModelChat.chat(body);
     return res.json(data);
+    }
+
+    /** Live model catalogue for the model-selection UI. */
+    @Get('models')
+    async models() {
+        return this.sonarModelChat.listModels();
     }
 
     @Post('ragStore')

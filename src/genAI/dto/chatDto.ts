@@ -1,5 +1,5 @@
 import { Prop } from "@nestjs/mongoose";
-import { IsBoolean, IsString, isString } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString } from "class-validator";
 
 
 export class conversations{
@@ -14,11 +14,17 @@ export class chat{
     @Prop([conversations])
     messages: conversations[];
    
+    @IsOptional()
     @IsString()
-    model: string;
+    model?: string;
 
+    @IsOptional()
+    @IsIn(['groq', 'mistral'])
+    provider?: 'groq' | 'mistral';
+
+    @IsOptional()
     @IsBoolean()
-    stream: boolean;
+    stream?: boolean;
 
     @IsString()
     agent?: string;

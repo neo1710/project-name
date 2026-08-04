@@ -27,12 +27,20 @@ export class chatAgents {
         return critiquePrompt;
     }
 
-    async ragAgent(query: string, messages: conversations[]) {
+    async ragAgent(
+        query: string,
+        messages: conversations[],
+        options: { provider?: 'groq' | 'mistral'; model?: string } = {},
+    ) {
         this.logger.log('RAG agent function executed', query);
         const embeddingApi = this.configService.get<string>('EMBEDDING_API');
         try {
 
-            const perfectQuery = await this.sonarApiTools.queryRewriter(messages);
+            const perfectQuery = await this.sonarApiTools.queryRewriter(
+                messages,
+                options.provider || 'mistral',
+                options.model,
+            );
             this.logger.log('RAG agent got rewritten query', perfectQuery);
 
             if (!embeddingApi) {

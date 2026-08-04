@@ -1,6 +1,7 @@
 import { Injectable, Global, Logger } from "@nestjs/common";
 import { conversations } from "../dto/chatDto";
 import { ConfigService } from "@nestjs/config/dist/config.service";
+import Groq from 'groq-sdk';
 
 
 @Injectable() @Global()
@@ -10,8 +11,11 @@ export class SonarApiTools {
 
   constructor(private configService: ConfigService) { }
 
-  async queryRewriter(messages: conversations[]) {
-    const apiKey = this.configService.get<string>('MYSTRAL_API_KEY');
+  async queryRewriter(
+    messages: conversations[],
+    provider: 'groq' | 'mistral' = 'mistral',
+    model?: string,
+  ) {
     const rewriterPrompt = `
 You are a query rewriter. You take the user query and rewrite it to be more clear and concise for RAG retrieval.
 
@@ -44,6 +48,28 @@ Wrong: ["Who is Neeraj Chopra?"] ❌
 Correct: ["Who is neeraj?"] ✅
 `;
     try {
+      if (provider === 'groq') {
+        const apiKey = this.configService.get<string>('GROQ_API_KEY');
+        if (!apiKey) throw new Error('GROQ_API_KEY is missing');
+
+        const completion = await new Groq({ apiKey }).chat.completions.create({
+          // A chosen text model is reused so an agent stays within the selected provider.
+          model: model || 'openai/gpt-oss-20b',
+          messages: [
+            { role: 'system', content: rewriterPrompt },
+            ...messages.map((message) => ({
+              role: message.role as 'user' | 'assistant' | 'system',
+              content: message.content,
+            })),
+          ],
+        });
+        return completion.choices[0]?.message?.content || '';
+      }
+
+      const apiKey = this.configService.get<string>('MISTRAL_API_KEY')
+        || this.configService.get<string>('MYSTRAL_API_KEY');
+      if (!apiKey) throw new Error('MISTRAL_API_KEY (or legacy MYSTRAL_API_KEY) is missing');
+
       const response = await fetch(this.sonarUrl, {
         method: 'POST',
         headers: {
@@ -75,4 +101,4 @@ Correct: ["Who is neeraj?"] ✅
   }
 
 
-}  
+}

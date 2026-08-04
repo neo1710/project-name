@@ -25,6 +25,42 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## AI model providers
+
+Set server-only environment variables (never expose these in the frontend):
+
+```env
+GROQ_API_KEY=your_groq_secret
+# Existing provider; the legacy MYSTRAL_API_KEY name also remains supported.
+MISTRAL_API_KEY=your_mistral_secret
+```
+
+`GET /genAI/models` returns the currently available Groq models for a model picker.
+Its `models` field is frontend-ready, for example:
+
+```json
+{
+  "models": [
+    { "id": "openai/gpt-oss-120b", "provider": "groq" },
+    { "id": "mistral-small-latest", "provider": "mistral" }
+  ]
+}
+```
+Pass a `model` to `POST /genAI/chat`. Models returned by Groq's live catalogue use
+the Groq SDK automatically; every other model uses the existing Mistral format. The
+known Groq IDs, including `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, and
+`openai/gpt-oss-safeguard-20b`, keep using Groq even during a temporary catalogue
+outage. You may still set `provider: "groq"` or `provider: "mistral"` explicitly.
+
+```json
+{
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "messages": [{ "role": "user", "content": "Hello" }],
+  "stream": false
+}
+```
+
 ## Project setup
 
 ```bash

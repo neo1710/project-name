@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Groq from 'groq-sdk';
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions';
-import { chat } from './dto/chatDto';
+import { chat, conversations } from './dto/chatDto';
 import { ragStore } from './dto/ragDto';
 import { chatAgents } from './agents/agents';
 
@@ -30,25 +30,46 @@ const KNOWN_GROQ_MODEL_IDS = new Set([
 @Injectable()
 export class SonarModelChat {
   private readonly logger = new Logger(SonarModelChat.name);
-  private readonly sonarUrl = "https://api.mistral.ai/v1/chat/completions";
-  private groqModelsCache: Array<{ id: string; owned_by?: string; created?: number }> = [];
+  private readonly sonarUrl = 'https://api.mistral.ai/v1/chat/completions';
+  private groqModelsCache: Array<{
+    id: string;
+    owned_by?: string;
+    created?: number;
+  }> = [];
   private groqModelsCacheExpiresAt = 0;
 
-  constructor(private agents: chatAgents, private configService: ConfigService) { }
+  constructor(
+    private agents: chatAgents,
+    private configService: ConfigService,
+  ) {}
 
   /** Live Groq catalogue for the client model picker (database-ready later). */
   async listModels() {
     const groqApiKey = this.configService.get<string>('GROQ_API_KEY');
-    let groq: { available: boolean; models: Array<{ id: string; owned_by?: string; created?: number }>; error?: string };
+    let groq: {
+      available: boolean;
+      models: Array<{ id: string; owned_by?: string; created?: number }>;
+      error?: string;
+    };
 
     if (!groqApiKey) {
-      groq = { available: false, models: [], error: 'GROQ_API_KEY is not configured' };
+      groq = {
+        available: false,
+        models: [],
+        error: 'GROQ_API_KEY is not configured',
+      };
     } else {
       try {
         groq = { available: true, models: await this.getGroqModels() };
       } catch (error) {
-        this.logger.warn(`Unable to list Groq models: ${this.getErrorMessage(error)}`);
-        groq = { available: false, models: [], error: 'Groq models are temporarily unavailable' };
+        this.logger.warn(
+          `Unable to list Groq models: ${this.getErrorMessage(error)}`,
+        );
+        groq = {
+          available: false,
+          models: [],
+          error: 'Groq models are temporarily unavailable',
+        };
       }
     }
 
@@ -60,8 +81,14 @@ export class SonarModelChat {
     return {
       // Use this directly in a frontend select/dropdown.
       models: [
-        ...groq.models.map((model) => ({ ...model, provider: 'groq' as const })),
-        ...mistral.models.map((model) => ({ ...model, provider: 'mistral' as const })),
+        ...groq.models.map((model) => ({
+          ...model,
+          provider: 'groq' as const,
+        })),
+        ...mistral.models.map((model) => ({
+          ...model,
+          provider: 'mistral' as const,
+        })),
       ],
       providers: { groq, mistral },
     };
@@ -69,8 +96,11 @@ export class SonarModelChat {
 
   // ✅ NON-STREAMING CHAT
   async chat(body: chat) {
-    if (await this.resolveProvider(body) === 'groq') {
-      return this.groqChat(body, await this.prepareAgentMessages(body, this.researchSystemPrompt()));
+    if ((await this.resolveProvider(body)) === 'groq') {
+      return this.groqChat(
+        body,
+        await this.prepareAgentMessages(body, this.researchSystemPrompt()),
+      );
     }
 
     const apiKey = this.getMistralApiKey();
@@ -90,10 +120,7 @@ Instructions:
 
     const requestBody = {
       model: body.model || 'mistral-small-latest',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...body.messages,
-      ],
+      messages: [{ role: 'system', content: systemPrompt }, ...body.messages],
       stream: false,
     };
 
@@ -114,10 +141,66 @@ Instructions:
     return response.json();
   }
 
+  /** Executes a workflow prompt node and returns its text output. */
+  async completeWorkflowPrompt(input: {
+    provider?: 'groq' | 'mistral';
+    model?: string;
+    prompt: string;
+    messages: conversations[];
+  }) {
+    const provider =
+      input.provider ||
+      (input.model && KNOWN_GROQ_MODEL_IDS.has(input.model)
+        ? 'groq'
+        : 'mistral');
+    const messages = [
+      { role: 'system' as const, content: input.prompt },
+      ...input.messages.map((message) => ({
+        role: message.role as 'user' | 'assistant' | 'system',
+        content: message.content,
+      })),
+    ];
+
+    if (provider === 'groq') {
+      const response = await this.getGroqClient().chat.completions.create({
+        model: input.model || 'llama-3.3-70b-versatile',
+        messages: messages as ChatCompletionMessageParam[],
+        stream: false,
+      });
+      return response.choices[0]?.message?.content || '';
+    }
+
+    const apiKey = this.getMistralApiKey();
+    if (!apiKey)
+      throw new Error('MISTRAL_API_KEY (or legacy MYSTRAL_API_KEY) is missing');
+    const response = await fetch(this.sonarUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: input.model || 'mistral-small-latest',
+        messages,
+        stream: false,
+      }),
+    });
+    if (!response.ok)
+      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return data.choices?.[0]?.message?.content || '';
+  }
+
   // ✅ STREAMING CHAT (SSE)
   async chatStream(body: chat, res: any) {
-    if (await this.resolveProvider(body) === 'groq') {
-      return this.groqChatStream(body, res, await this.prepareAgentMessages(body, this.streamingSystemPrompt()));
+    if ((await this.resolveProvider(body)) === 'groq') {
+      return this.groqChatStream(
+        body,
+        res,
+        await this.prepareAgentMessages(body, this.streamingSystemPrompt()),
+      );
     }
 
     const apiKey = this.getMistralApiKey();
@@ -130,7 +213,10 @@ Instructions:
     let userQuery = body.messages[body.messages.length - 1].content;
     if (bodyAgent && body.agent === 'ragAgent') {
       this.logger.log(`Using RAG agent: ${body.agent}`);
-      const ragResult = await this.agents.ragAgent(body.messages[body.messages.length - 1].content, body.messages);
+      const ragResult = await this.agents.ragAgent(
+        body.messages[body.messages.length - 1].content,
+        body.messages,
+      );
       agentPrompt = ragResult.prompt;
       userQuery = ragResult.ragQueryWithContext;
       body.messages[body.messages.length - 1].content = userQuery;
@@ -196,8 +282,10 @@ For all questions, respond in JSON format:
 
   private getMistralApiKey() {
     // Keep the existing misspelled variable working for deployed environments.
-    return this.configService.get<string>('MISTRAL_API_KEY')
-      || this.configService.get<string>('MYSTRAL_API_KEY');
+    return (
+      this.configService.get<string>('MISTRAL_API_KEY') ||
+      this.configService.get<string>('MYSTRAL_API_KEY')
+    );
   }
 
   private getGroqClient() {
@@ -221,11 +309,13 @@ For all questions, respond in JSON format:
 
   private async resolveProvider(body: chat): Promise<'groq' | 'mistral'> {
     if (body.provider) return body.provider;
-    if (!body.model || !this.configService.get<string>('GROQ_API_KEY')) return 'mistral';
+    if (!body.model || !this.configService.get<string>('GROQ_API_KEY'))
+      return 'mistral';
 
     try {
       const groqModels = await this.getGroqModels();
-      return groqModels.some((model) => model.id === body.model) || KNOWN_GROQ_MODEL_IDS.has(body.model)
+      return groqModels.some((model) => model.id === body.model) ||
+        KNOWN_GROQ_MODEL_IDS.has(body.model)
         ? 'groq'
         : 'mistral';
     } catch {
@@ -236,7 +326,10 @@ For all questions, respond in JSON format:
   }
 
   /** Applies the same agent/RAG prompt preparation before calling Groq. */
-  private async prepareAgentMessages(body: chat, fallbackSystemPrompt: string): Promise<ChatCompletionMessageParam[]> {
+  private async prepareAgentMessages(
+    body: chat,
+    fallbackSystemPrompt: string,
+  ): Promise<ChatCompletionMessageParam[]> {
     const messages = body.messages.map((message) => ({
       role: message.role as 'user' | 'assistant' | 'system',
       content: message.content,
@@ -245,24 +338,35 @@ For all questions, respond in JSON format:
     let systemPrompt = fallbackSystemPrompt;
     if (body.agent === 'ragAgent') {
       const lastMessage = messages.at(-1);
-      if (!lastMessage) throw new Error('A message is required when using ragAgent');
+      if (!lastMessage)
+        throw new Error('A message is required when using ragAgent');
 
       this.logger.log('Using RAG agent with Groq');
-      const ragResult = await this.agents.ragAgent(lastMessage.content, messages, {
-        provider: 'groq',
-        model: body.model,
-      });
+      const ragResult = await this.agents.ragAgent(
+        lastMessage.content,
+        messages,
+        {
+          provider: 'groq',
+          model: body.model,
+        },
+      );
       systemPrompt = ragResult.prompt;
       lastMessage.content = ragResult.ragQueryWithContext;
     } else if (body.agent) {
-      const agent = (this.agents as unknown as Record<string, unknown>)[body.agent];
-      if (typeof agent !== 'function') throw new Error(`Unknown agent: ${body.agent}`);
+      const agent = (this.agents as unknown as Record<string, unknown>)[
+        body.agent
+      ];
+      if (typeof agent !== 'function')
+        throw new Error(`Unknown agent: ${body.agent}`);
 
       this.logger.log(`Using agent with Groq: ${body.agent}`);
       systemPrompt = await (agent as () => Promise<string>).call(this.agents);
     }
 
-    return [{ role: 'system', content: systemPrompt }, ...messages] as ChatCompletionMessageParam[];
+    return [
+      { role: 'system', content: systemPrompt },
+      ...messages,
+    ] as ChatCompletionMessageParam[];
   }
 
   private researchSystemPrompt() {
@@ -288,7 +392,11 @@ For all questions, respond in JSON format:
     });
   }
 
-  private async groqChatStream(body: chat, res: any, messages: ChatCompletionMessageParam[]) {
+  private async groqChatStream(
+    body: chat,
+    res: any,
+    messages: ChatCompletionMessageParam[],
+  ) {
     const stream = await this.getGroqClient().chat.completions.create({
       model: body.model || 'llama-3.3-70b-versatile',
       messages,
@@ -302,7 +410,8 @@ For all questions, respond in JSON format:
     });
 
     try {
-      for await (const chunk of stream) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      for await (const chunk of stream)
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
       res.write('data: [DONE]\n\n');
     } finally {
       res.end();
@@ -315,7 +424,9 @@ For all questions, respond in JSON format:
 
   async ragStore(body: ragStore) {
     this.logger.log('RAG Store function executed', JSON.stringify(body));
-    const embeddingApi = this.configService.get<string>('EMBEDDING_API') || 'http://localhost:8001';
+    const embeddingApi =
+      this.configService.get<string>('EMBEDDING_API') ||
+      'http://localhost:8001';
 
     const maxRetries = 3;
     const timeoutMs = 10000; // 10s per request
@@ -348,7 +459,9 @@ For all questions, respond in JSON format:
 
         const text = await response.text();
         if (!response.ok) {
-          this.logger.error(`ragStore failed attempt ${attempt}: ${response.status} ${response.statusText} - ${text}`);
+          this.logger.error(
+            `ragStore failed attempt ${attempt}: ${response.status} ${response.statusText} - ${text}`,
+          );
           if (attempt < maxRetries) {
             await new Promise((r) => setTimeout(r, 500 * attempt));
             continue;
@@ -365,15 +478,21 @@ For all questions, respond in JSON format:
       } catch (err: any) {
         clearTimeout(timeout as any);
         const isAbort = err && err.name === 'AbortError';
-        this.logger.error(`ragStore exception attempt ${attempt}: ${isAbort ? 'timeout' : err}`, err);
+        this.logger.error(
+          `ragStore exception attempt ${attempt}: ${isAbort ? 'timeout' : err}`,
+          err,
+        );
         if (attempt < maxRetries) {
           await new Promise((r) => setTimeout(r, 500 * attempt));
           continue;
         }
-        return { ok: false, error: isAbort ? 'timeout' : 'exception', details: err };
+        return {
+          ok: false,
+          error: isAbort ? 'timeout' : 'exception',
+          details: err,
+        };
       }
     }
     return { ok: false, error: 'unreachable' };
-
   }
 }

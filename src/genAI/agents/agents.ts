@@ -3,18 +3,21 @@ import { ConfigService } from '@nestjs/config';
 import { conversations } from '../dto/chatDto';
 import { SonarApiTools } from '../tools/sonarApiTools';
 
-@Injectable() @Global()
+@Injectable()
+@Global()
 export class chatAgents {
-    private readonly logger = new Logger(chatAgents.name);
-    private readonly sonarUrl = "https://api.mistral.ai/v1/chat/completions";
+  private readonly logger = new Logger(chatAgents.name);
+  private readonly sonarUrl = 'https://api.mistral.ai/v1/chat/completions';
 
-    constructor(private sonarApiTools: SonarApiTools, private configService: ConfigService) { }
+  constructor(
+    private sonarApiTools: SonarApiTools,
+    private configService: ConfigService,
+  ) {}
 
-    async critiqueAgent() {
+  async critiqueAgent() {
+    this.logger.log('Critique agent function executed');
 
-        this.logger.log('Critique agent function executed');
-
-        const critiquePrompt = `
+    const critiquePrompt = `
         You are a critique agent. Your task is to evaluate the user query and provide feedback.
 
         Instructions:
@@ -24,75 +27,82 @@ export class chatAgents {
         4. Provide your feedback in a concise manner.
         `;
 
-        return critiquePrompt;
-    }
+    return critiquePrompt;
+  }
 
-    async ragAgent(
-        query: string,
-        messages: conversations[],
-        options: { provider?: 'groq' | 'mistral'; model?: string } = {},
-    ) {
-        this.logger.log('RAG agent function executed', query);
-        const embeddingApi = this.configService.get<string>('EMBEDDING_API');
+  async ragAgent(
+    query: string,
+    messages: conversations[],
+    options: { provider?: 'groq' | 'mistral'; model?: string } = {},
+  ) {
+    this.logger.log('RAG agent function executed', query);
+    const embeddingApi = this.configService.get<string>('EMBEDDING_API');
+    try {
+      const perfectQuery = await this.sonarApiTools.queryRewriter(
+        messages,
+        options.provider || 'mistral',
+        options.model,
+      );
+      this.logger.log('RAG agent got rewritten query', perfectQuery);
+
+      if (!embeddingApi) {
+        throw new Error('EMBEDDING_API is missing or not configured');
+      }
+
+      let queryToUse = query;
+      if (perfectQuery) {
         try {
+          const parsed = JSON.parse(perfectQuery);
+          if (
+            Array.isArray(parsed) &&
+            parsed.length > 0 &&
+            typeof parsed[0] === 'string'
+          ) {
+            queryToUse = parsed[0];
+          } else if (typeof parsed === 'string') {
+            queryToUse = parsed;
+          } else {
+            queryToUse = perfectQuery;
+          }
+        } catch {
+          queryToUse = perfectQuery;
+        }
+      }
 
-            const perfectQuery = await this.sonarApiTools.queryRewriter(
-                messages,
-                options.provider || 'mistral',
-                options.model,
-            );
-            this.logger.log('RAG agent got rewritten query', perfectQuery);
+      const searchUrl = `${embeddingApi}/search?query=${encodeURIComponent(queryToUse)}`;
+      let response: Response | null = null;
+      const maxRetries = 3;
 
-            if (!embeddingApi) {
-                throw new Error('EMBEDDING_API is missing or not configured');
-            }
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        response = await fetch(searchUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
 
-            let queryToUse = query;
-            if (perfectQuery) {
-                try {
-                    const parsed = JSON.parse(perfectQuery);
-                    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'string') {
-                        queryToUse = parsed[0];
-                    } else if (typeof parsed === 'string') {
-                        queryToUse = parsed;
-                    } else {
-                        queryToUse = perfectQuery;
-                    }
-                } catch {
-                    queryToUse = perfectQuery;
-                }
-            }
+        if (response.status !== 429) {
+          break;
+        }
 
-            const searchUrl = `${embeddingApi}/search?query=${encodeURIComponent(queryToUse)}`;
-            let response: Response | null = null;
-            const maxRetries = 3;
+        const retryAfterHeader = response.headers.get('Retry-After');
+        const retryAfterMs = retryAfterHeader
+          ? Number(retryAfterHeader) * 1000
+          : 1000 * attempt;
+        this.logger.warn(
+          `RAG search rate limited, retrying attempt ${attempt}/${maxRetries} after ${retryAfterMs}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+      }
 
-            for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                response = await fetch(searchUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                });
+      if (!response || !response.ok) {
+        const err = response ? await response.text() : 'No response received';
+        throw new Error(`HTTP ${response?.status ?? 'UNKNOWN'}: ${err}`);
+      }
 
-                if (response.status !== 429) {
-                    break;
-                }
-
-                const retryAfterHeader = response.headers.get('Retry-After');
-                const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 1000 * attempt;
-                this.logger.warn(`RAG search rate limited, retrying attempt ${attempt}/${maxRetries} after ${retryAfterMs}ms`);
-                await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
-            }
-
-            if (!response || !response.ok) {
-                const err = response ? await response.text() : 'No response received';
-                throw new Error(`HTTP ${response?.status ?? 'UNKNOWN'}: ${err}`);
-            }
-
-            const data = await response.json();
-            this.logger.log('RAG agent retrieved contexts', data.results);
-            const ragPrompt = `You are a retrieval-based answer engine. Your ONLY source of truth is the context below.
+      const data = await response.json();
+      this.logger.log('RAG agent retrieved contexts', data.results);
+      const ragPrompt = `You are a retrieval-based answer engine. Your ONLY source of truth is the context below.
 
 **Retrieved Context:**
 Retrieved results from rag will be provided with the user query. Use ONLY this context to answer the question. Do NOT use any external knowledge or assumptions.
@@ -127,17 +137,15 @@ Retrieved results from rag will be provided with the user query. Use ONLY this c
 - Also use the context to related question like if asked about Neeraj and Context has info about Neeraj Dubey then also you can answer.
 - Do NOT answer if context is empty or is undefined/null
 `;
-            return {
-                prompt:ragPrompt,
-                ragQueryWithContext: `User query: ${query}
+      return {
+        prompt: ragPrompt,
+        ragQueryWithContext: `User query: ${query}
                 retrieved context: ${data.results[0].text}
-                `
-            };
-        } catch (error) {
-            this.logger.error('Error in RAG agent:', error);
-            throw error;
-        }
-
-
+                `,
+      };
+    } catch (error) {
+      this.logger.error('Error in RAG agent:', error);
+      throw error;
     }
+  }
 }

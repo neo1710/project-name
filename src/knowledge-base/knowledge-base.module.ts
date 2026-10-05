@@ -2,8 +2,14 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { KnowledgeBaseController } from './knowledge-base.controller';
 import { KnowledgeBaseService } from './knowledge-base.service';
-import { KnowledgeBaseDocument, KnowledgeBaseDocumentSchema } from './schemas/knowledge-base-document.schema';
-import { KnowledgeBaseFolder, KnowledgeBaseFolderSchema } from './schemas/knowledge-base-folder.schema';
+import {
+  KnowledgeBaseDocument,
+  KnowledgeBaseDocumentSchema,
+} from './schemas/knowledge-base-document.schema';
+import {
+  KnowledgeBaseFolder,
+  KnowledgeBaseFolderSchema,
+} from './schemas/knowledge-base-folder.schema';
 
 @Module({
   imports: [
@@ -14,5 +20,6 @@ import { KnowledgeBaseFolder, KnowledgeBaseFolderSchema } from './schemas/knowle
   ],
   controllers: [KnowledgeBaseController],
   providers: [KnowledgeBaseService],
+  exports: [KnowledgeBaseService],
 })
 export class KnowledgeBaseModule {}

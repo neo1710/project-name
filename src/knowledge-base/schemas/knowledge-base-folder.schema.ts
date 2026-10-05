@@ -15,4 +15,5 @@ export class KnowledgeBaseFolder {
   name: string;
 }
 
-export const KnowledgeBaseFolderSchema = SchemaFactory.createForClass(KnowledgeBaseFolder);
+export const KnowledgeBaseFolderSchema =
+  SchemaFactory.createForClass(KnowledgeBaseFolder);

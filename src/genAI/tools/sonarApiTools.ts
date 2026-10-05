@@ -1,15 +1,15 @@
-import { Injectable, Global, Logger } from "@nestjs/common";
-import { conversations } from "../dto/chatDto";
-import { ConfigService } from "@nestjs/config/dist/config.service";
+import { Injectable, Global, Logger } from '@nestjs/common';
+import { conversations } from '../dto/chatDto';
+import { ConfigService } from '@nestjs/config';
 import Groq from 'groq-sdk';
 
-
-@Injectable() @Global()
+@Injectable()
+@Global()
 export class SonarApiTools {
   private readonly logger = new Logger(SonarApiTools.name);
-  private readonly sonarUrl = "https://api.mistral.ai/v1/chat/completions";
+  private readonly sonarUrl = 'https://api.mistral.ai/v1/chat/completions';
 
-  constructor(private configService: ConfigService) { }
+  constructor(private configService: ConfigService) {}
 
   async queryRewriter(
     messages: conversations[],
@@ -66,9 +66,13 @@ Correct: ["Who is neeraj?"] ✅
         return completion.choices[0]?.message?.content || '';
       }
 
-      const apiKey = this.configService.get<string>('MISTRAL_API_KEY')
-        || this.configService.get<string>('MYSTRAL_API_KEY');
-      if (!apiKey) throw new Error('MISTRAL_API_KEY (or legacy MYSTRAL_API_KEY) is missing');
+      const apiKey =
+        this.configService.get<string>('MISTRAL_API_KEY') ||
+        this.configService.get<string>('MYSTRAL_API_KEY');
+      if (!apiKey)
+        throw new Error(
+          'MISTRAL_API_KEY (or legacy MYSTRAL_API_KEY) is missing',
+        );
 
       const response = await fetch(this.sonarUrl, {
         method: 'POST',
@@ -78,10 +82,7 @@ Correct: ["Who is neeraj?"] ✅
         },
         body: JSON.stringify({
           model: 'mistral-small-latest',
-          messages: [
-            { role: 'system', content: rewriterPrompt },
-            ...messages,
-          ],
+          messages: [{ role: 'system', content: rewriterPrompt }, ...messages],
           stream: false,
         }),
       });
@@ -90,15 +91,15 @@ Correct: ["Who is neeraj?"] ✅
         throw new Error(`HTTP ${response.status}: ${err}`);
       } else {
         const data = await response.json();
-        this.logger.log('Query rewriter response', data.choices[0].message.content);
+        this.logger.log(
+          'Query rewriter response',
+          data.choices[0].message.content,
+        );
         return data.choices[0].message.content;
       }
     } catch (error) {
       console.error('Error in query rewriter:', error);
       throw error;
     }
-
   }
-
-
 }

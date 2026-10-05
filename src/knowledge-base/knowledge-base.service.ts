@@ -6,7 +6,12 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Model } from 'mongoose';
 import { randomUUID } from 'crypto';
@@ -14,8 +19,14 @@ import { CreateUploadDto } from './dto/create-upload.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
 import { SearchKnowledgeBaseDto } from './dto/search-knowledge-base.dto';
 import { StoreDocumentDto } from './dto/store-document.dto';
-import { KnowledgeBaseDocument, KnowledgeBaseDocumentDocument } from './schemas/knowledge-base-document.schema';
-import { KnowledgeBaseFolder, KnowledgeBaseFolderDocument } from './schemas/knowledge-base-folder.schema';
+import {
+  KnowledgeBaseDocument,
+  KnowledgeBaseDocumentDocument,
+} from './schemas/knowledge-base-document.schema';
+import {
+  KnowledgeBaseFolder,
+  KnowledgeBaseFolderDocument,
+} from './schemas/knowledge-base-folder.schema';
 
 interface QdrantChunkPoint {
   id: string;
@@ -49,14 +60,18 @@ export class KnowledgeBaseService {
   async createUploadUrl(input: CreateUploadDto, folderId?: string) {
     const bucket = this.config.get<string>('AWS_S3_KNOWLEDGE_BASE_BUCKET');
     if (!bucket) {
-      throw new ServiceUnavailableException('AWS_S3_KNOWLEDGE_BASE_BUCKET is not configured');
+      throw new ServiceUnavailableException(
+        'AWS_S3_KNOWLEDGE_BASE_BUCKET is not configured',
+      );
     }
 
     let folder: KnowledgeBaseFolderDocument | undefined;
     if (folderId) {
       folder = await this.findFolder(folderId);
       if (folder.ownerId !== input.ownerId) {
-        throw new NotFoundException(`Knowledge-base folder ${folderId} was not found for this owner`);
+        throw new NotFoundException(
+          `Knowledge-base folder ${folderId} was not found for this owner`,
+        );
       }
     }
 
@@ -79,7 +94,11 @@ export class KnowledgeBaseService {
     try {
       const uploadUrl = await getSignedUrl(
         this.s3,
-        new PutObjectCommand({ Bucket: bucket, Key: s3Key, ContentType: input.contentType }),
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: s3Key,
+          ContentType: input.contentType,
+        }),
         { expiresIn: 300 },
       );
       return {
@@ -96,7 +115,9 @@ export class KnowledgeBaseService {
       };
     } catch (error) {
       await this.documents.findByIdAndDelete(document._id);
-      throw new ServiceUnavailableException(`Could not create S3 upload URL: ${this.errorMessage(error)}`);
+      throw new ServiceUnavailableException(
+        `Could not create S3 upload URL: ${this.errorMessage(error)}`,
+      );
     }
   }
 
@@ -114,7 +135,9 @@ export class KnowledgeBaseService {
     const document = await this.findDocument(documentId);
     const bucket = this.config.get<string>('AWS_S3_KNOWLEDGE_BASE_BUCKET');
     if (!bucket) {
-      throw new ServiceUnavailableException('AWS_S3_KNOWLEDGE_BASE_BUCKET is not configured');
+      throw new ServiceUnavailableException(
+        'AWS_S3_KNOWLEDGE_BASE_BUCKET is not configured',
+      );
     }
 
     try {
@@ -130,7 +153,9 @@ export class KnowledgeBaseService {
       );
       return { document: this.serialize(document), url, expiresInSeconds: 300 };
     } catch (error) {
-      throw new ServiceUnavailableException(`Could not create S3 document URL: ${this.errorMessage(error)}`);
+      throw new ServiceUnavailableException(
+        `Could not create S3 document URL: ${this.errorMessage(error)}`,
+      );
     }
   }
 
@@ -140,7 +165,10 @@ export class KnowledgeBaseService {
 
   async ingest(documentId: string, input: StoreDocumentDto) {
     const document = await this.findDocument(documentId);
-    await this.documents.updateOne({ documentId }, { status: 'processing', error: undefined });
+    await this.documents.updateOne(
+      { documentId },
+      { status: 'processing', error: undefined },
+    );
 
     try {
       const response = await this.embeddingRequest('/store', {
@@ -148,36 +176,63 @@ export class KnowledgeBaseService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ doc: input.text, doc_id: document.documentId }),
       });
-      const result = await response.json() as { stored_chunks?: number; doc_id?: string };
+      const result = (await response.json()) as {
+        stored_chunks?: number;
+        doc_id?: string;
+      };
       if (!response.ok) throw new Error(JSON.stringify(result));
 
       const updated = await this.documents.findOneAndUpdate(
         { documentId },
-        { status: 'ready', storedChunks: result.stored_chunks || 0, error: undefined },
+        {
+          status: 'ready',
+          storedChunks: result.stored_chunks || 0,
+          error: undefined,
+        },
         { new: true },
       );
       return { document: this.serialize(updated!), embedding: result };
     } catch (error) {
-      await this.documents.updateOne({ documentId }, { status: 'failed', error: this.errorMessage(error) });
-      throw new BadGatewayException(`Embedding ingestion failed: ${this.errorMessage(error)}`);
+      await this.documents.updateOne(
+        { documentId },
+        { status: 'failed', error: this.errorMessage(error) },
+      );
+      throw new BadGatewayException(
+        `Embedding ingestion failed: ${this.errorMessage(error)}`,
+      );
     }
   }
 
   async search(input: SearchKnowledgeBaseDto, documentId?: string) {
     if (documentId) await this.findDocument(documentId);
-    const params = new URLSearchParams({ query: input.query, top_k: String(input.topK || 3) });
+    const params = new URLSearchParams({
+      query: input.query,
+      top_k: String(input.topK || 3),
+    });
     if (documentId) params.set('doc_id', documentId);
-    const response = await this.embeddingRequest(`/search?${params.toString()}`, { method: 'POST' });
-    const payload = await response.json() as { results?: Array<{ doc_id: string; text: string; score: number }> };
-    if (!response.ok) throw new BadGatewayException(`Embedding search failed: ${JSON.stringify(payload)}`);
+    const response = await this.embeddingRequest(
+      `/search?${params.toString()}`,
+      { method: 'POST' },
+    );
+    const payload = (await response.json()) as {
+      results?: Array<{ doc_id: string; text: string; score: number }>;
+    };
+    if (!response.ok)
+      throw new BadGatewayException(
+        `Embedding search failed: ${JSON.stringify(payload)}`,
+      );
 
-    const ids = [...new Set((payload.results || []).map((item) => item.doc_id))];
+    const ids = [
+      ...new Set((payload.results || []).map((item) => item.doc_id)),
+    ];
     const docs = await this.documents.find({ documentId: { $in: ids } }).lean();
     const byId = new Map(docs.map((doc) => [doc.documentId, doc]));
     return {
       results: (payload.results || []).map((item) => ({
         ...item,
-        document: byId.has(item.doc_id) ? this.serialize(byId.get(item.doc_id)!) : null,
+        document: byId.has(item.doc_id)
+          ? this.serialize(byId.get(item.doc_id)!)
+          : null,
       })),
     };
   }
@@ -188,34 +243,45 @@ export class KnowledgeBaseService {
 
   async listDocuments(ownerId?: string) {
     const filter = ownerId ? { ownerId } : {};
-    const docs = await this.documents.find(filter).sort({ createdAt: -1 }).lean();
+    const docs = await this.documents
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .lean();
     return docs.map((document) => this.serialize(document));
   }
 
   async getStoredChunks(documentId: string) {
     await this.findDocument(documentId);
     const qdrantUrl = this.config.get<string>('QDRANT_URL');
-    if (!qdrantUrl) throw new ServiceUnavailableException('QDRANT_URL is not configured');
+    if (!qdrantUrl)
+      throw new ServiceUnavailableException('QDRANT_URL is not configured');
 
-    const collection = this.config.get<string>('QDRANT_COLLECTION_NAME') || 'documents';
+    const collection =
+      this.config.get<string>('QDRANT_COLLECTION_NAME') || 'documents';
     const apiKey = this.config.get<string>('QDRANT_API_KEY');
-    const response = await fetch(`${qdrantUrl.replace(/\/$/, '')}/collections/${encodeURIComponent(collection)}/points/scroll`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { 'api-key': apiKey } : {}),
-      },
-      body: JSON.stringify({
-        filter: {
-          must: [{ key: 'doc_id', match: { value: documentId } }],
+    const response = await fetch(
+      `${qdrantUrl.replace(/\/$/, '')}/collections/${encodeURIComponent(collection)}/points/scroll`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'api-key': apiKey } : {}),
         },
-        with_payload: true,
-        with_vector: false,
-        limit: 1_000,
-      }),
-    });
+        body: JSON.stringify({
+          filter: {
+            must: [{ key: 'doc_id', match: { value: documentId } }],
+          },
+          with_payload: true,
+          with_vector: false,
+          limit: 1_000,
+        }),
+      },
+    );
     const payload = (await response.json()) as QdrantScrollResponse;
-    if (!response.ok) throw new BadGatewayException(`Qdrant chunk retrieval failed: ${JSON.stringify(payload)}`);
+    if (!response.ok)
+      throw new BadGatewayException(
+        `Qdrant chunk retrieval failed: ${JSON.stringify(payload)}`,
+      );
     return {
       documentId,
       chunks: (payload.result?.points || []).map((point) => ({
@@ -229,53 +295,93 @@ export class KnowledgeBaseService {
 
   async remove(documentId: string) {
     const document = await this.findDocument(documentId);
-    const response = await this.embeddingRequest(`/delete/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
-    if (!response.ok) throw new BadGatewayException('Could not delete vectors from the embedding API');
+    const response = await this.embeddingRequest(
+      `/delete/${encodeURIComponent(documentId)}`,
+      { method: 'DELETE' },
+    );
+    if (!response.ok)
+      throw new BadGatewayException(
+        'Could not delete vectors from the embedding API',
+      );
 
     const bucket = this.config.get<string>('AWS_S3_KNOWLEDGE_BASE_BUCKET');
     if (bucket) {
       try {
-        await this.s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: document.s3Key }));
+        await this.s3.send(
+          new DeleteObjectCommand({ Bucket: bucket, Key: document.s3Key }),
+        );
       } catch (error) {
-        throw new BadGatewayException(`Vectors were deleted, but the S3 source could not be deleted: ${this.errorMessage(error)}`);
+        throw new BadGatewayException(
+          `Vectors were deleted, but the S3 source could not be deleted: ${this.errorMessage(error)}`,
+        );
       }
     }
     await this.documents.deleteOne({ documentId });
     return { documentId, deleted: true };
   }
 
-  private async findDocument(documentId: string): Promise<KnowledgeBaseDocumentDocument> {
+  private async findDocument(
+    documentId: string,
+  ): Promise<KnowledgeBaseDocumentDocument> {
     const document = await this.documents.findOne({ documentId });
-    if (!document) throw new NotFoundException(`Knowledge-base document ${documentId} was not found`);
+    if (!document)
+      throw new NotFoundException(
+        `Knowledge-base document ${documentId} was not found`,
+      );
     return document;
   }
 
-  private async findFolder(folderId: string): Promise<KnowledgeBaseFolderDocument> {
+  private async findFolder(
+    folderId: string,
+  ): Promise<KnowledgeBaseFolderDocument> {
     const folder = await this.folders.findOne({ folderId });
-    if (!folder) throw new NotFoundException(`Knowledge-base folder ${folderId} was not found`);
+    if (!folder)
+      throw new NotFoundException(
+        `Knowledge-base folder ${folderId} was not found`,
+      );
     return folder;
   }
 
   private async updateStatus(documentId: string, status: string) {
-    const document = await this.documents.findOneAndUpdate({ documentId }, { status }, { new: true });
-    if (!document) throw new NotFoundException(`Knowledge-base document ${documentId} was not found`);
+    const document = await this.documents.findOneAndUpdate(
+      { documentId },
+      { status },
+      { new: true },
+    );
+    if (!document)
+      throw new NotFoundException(
+        `Knowledge-base document ${documentId} was not found`,
+      );
     return this.serialize(document);
   }
 
-  private async embeddingRequest(path: string, init: RequestInit): Promise<Response> {
+  private async embeddingRequest(
+    path: string,
+    init: RequestInit,
+  ): Promise<Response> {
     // EMBEDDING_API is the variable already used by the existing GenAI module.
     // EMBEDDING_API_URL remains supported for a clearer knowledge-base-specific name.
-    const baseUrl = this.config.get<string>('EMBEDDING_API_URL') || this.config.get<string>('EMBEDDING_API');
-    if (!baseUrl) throw new ServiceUnavailableException('EMBEDDING_API or EMBEDDING_API_URL is not configured');
+    const baseUrl =
+      this.config.get<string>('EMBEDDING_API_URL') ||
+      this.config.get<string>('EMBEDDING_API');
+    if (!baseUrl)
+      throw new ServiceUnavailableException(
+        'EMBEDDING_API or EMBEDDING_API_URL is not configured',
+      );
     try {
       return await fetch(`${baseUrl.replace(/\/$/, '')}${path}`, init);
     } catch (error) {
-      throw new BadGatewayException(`Embedding API is unavailable: ${this.errorMessage(error)}`);
+      throw new BadGatewayException(
+        `Embedding API is unavailable: ${this.errorMessage(error)}`,
+      );
     }
   }
 
   private serialize(document: KnowledgeBaseDocument | Record<string, any>) {
-    const value = typeof (document as any).toObject === 'function' ? (document as any).toObject() : document;
+    const value =
+      typeof (document as any).toObject === 'function'
+        ? (document as any).toObject()
+        : document;
     const { _id, __v, ...rest } = value;
     return rest;
   }

@@ -1,4 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
 import { SearchKnowledgeBaseDto } from './dto/search-knowledge-base.dto';
@@ -20,7 +28,10 @@ export class KnowledgeBaseController {
   }
 
   @Post('folders/:folderId/documents/upload-url')
-  createFolderUploadUrl(@Param('folderId') folderId: string, @Body() body: CreateUploadDto) {
+  createFolderUploadUrl(
+    @Param('folderId') folderId: string,
+    @Body() body: CreateUploadDto,
+  ) {
     return this.knowledgeBase.createUploadUrl(body, folderId);
   }
 
@@ -30,7 +41,10 @@ export class KnowledgeBaseController {
   }
 
   @Post('documents/:documentId/ingest')
-  ingest(@Param('documentId') documentId: string, @Body() body: StoreDocumentDto) {
+  ingest(
+    @Param('documentId') documentId: string,
+    @Body() body: StoreDocumentDto,
+  ) {
     return this.knowledgeBase.ingest(documentId, body);
   }
 
@@ -40,7 +54,10 @@ export class KnowledgeBaseController {
   }
 
   @Post('documents/:documentId/search')
-  searchDocument(@Param('documentId') documentId: string, @Body() body: SearchKnowledgeBaseDto) {
+  searchDocument(
+    @Param('documentId') documentId: string,
+    @Body() body: SearchKnowledgeBaseDto,
+  ) {
     return this.knowledgeBase.search(body, documentId);
   }
 

@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-export type KnowledgeBaseDocumentDocument = HydratedDocument<KnowledgeBaseDocument>;
+export type KnowledgeBaseDocumentDocument =
+  HydratedDocument<KnowledgeBaseDocument>;
 
 @Schema({ collection: 'knowledge_base_documents', timestamps: true })
 export class KnowledgeBaseDocument {
@@ -26,7 +27,11 @@ export class KnowledgeBaseDocument {
   @Prop({ index: true })
   folderId?: string;
 
-  @Prop({ enum: ['pending_upload', 'uploaded', 'processing', 'ready', 'failed'], default: 'pending_upload', index: true })
+  @Prop({
+    enum: ['pending_upload', 'uploaded', 'processing', 'ready', 'failed'],
+    default: 'pending_upload',
+    index: true,
+  })
   status: string;
 
   @Prop({ default: 0 })
@@ -39,4 +44,6 @@ export class KnowledgeBaseDocument {
   metadata: Record<string, unknown>;
 }
 
-export const KnowledgeBaseDocumentSchema = SchemaFactory.createForClass(KnowledgeBaseDocument);
+export const KnowledgeBaseDocumentSchema = SchemaFactory.createForClass(
+  KnowledgeBaseDocument,
+);

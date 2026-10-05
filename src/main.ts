@@ -9,13 +9,12 @@ async function bootstrap() {
     res.send('hello I am setup for this');
   });
 
-    // Enable CORS for all origins
+  // Enable CORS for all origins
   app.enableCors({
     origin: '*', // Allow all origins
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
-
 
   await app.listen(process.env.PORT ?? 3000);
 }

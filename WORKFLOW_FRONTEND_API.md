@@ -79,7 +79,7 @@ type Workflow = {
 | `agent` | `name`, `type`, `position`, `agentType` | An AI reasoning/model node. |
 | `tool` | `name`, `type`, `position`, `tool` | A deterministic or external capability. |
 | `condition` | `name`, `type`, `position`, `expression` | A future execution branch. |
-| `output` | `name`, `type`, `position`, `value` | Optional override for a final workflow response. |
+| `output` | `name`, `type`, `position` | Optional final workflow response. If `value` is omitted, it dynamically takes the last ran node's response. |
 
 ## Agent types
 
@@ -419,7 +419,9 @@ The frontend does not need to add an Output node. The server selects the final r
 
 For an agent, the server uses `output.answer` when present and falls back to `output.content`. This makes the final `Grounded answer` agent in the example above the chat response automatically.
 
-Use an Output node only when you need an explicit final template or have several terminal branches and want to choose one deliberately:
+When using an Output node:
+- If `value` is omitted or empty, the Output node dynamically takes the response of the last ran node connected to it.
+- You can also specify an explicit template or text in `value`:
 
 ```json
 {
@@ -464,7 +466,7 @@ The canvas should prevent these before save; the backend validates them again.
 - An agent requires `agentType`.
 - A tool requires `tool`.
 - A condition requires `expression`.
-- An output requires `value`.
+- An output `value` is optional; if omitted, it dynamically takes the last ran node's response.
 - Every edge must reference existing node names.
 - Input nodes cannot have incoming edges; output nodes cannot have outgoing edges.
 - Self-links, duplicate links, disconnected nodes, and cycles are rejected.

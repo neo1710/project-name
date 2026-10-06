@@ -56,6 +56,7 @@ export class WorkflowRuntimeService {
         outputs,
         body.messages,
         citations,
+        workflow.edges,
       );
       outputs.set(node.name, output);
       trace.push({
@@ -107,6 +108,7 @@ export class WorkflowRuntimeService {
       excerpt: string;
       score: number;
     }>,
+    edges: WorkflowEdge[] = [],
   ): Promise<NodeOutput> {
     if (node.type === 'input') {
       const latest = messages.at(-1)!;
@@ -181,7 +183,14 @@ export class WorkflowRuntimeService {
     }
 
     if (node.type === 'output') {
-      return { value: this.resolveValue(node.value || '', outputs) };
+      const hasExplicitValue =
+        typeof node.value === 'string' && node.value.trim().length > 0;
+
+      const value = hasExplicitValue
+        ? this.resolveValue(node.value!, outputs)
+        : this.resolveFallbackOutput(node, outputs, edges);
+
+      return { value };
     }
 
     throw new BadRequestException(`Unsupported node type: ${node.type}`);
@@ -238,13 +247,87 @@ export class WorkflowRuntimeService {
     const rawOutput = outputs.get(selected.name) || {};
     const value =
       selected.type === 'output'
-        ? rawOutput.value
+        ? rawOutput.value !== undefined &&
+          rawOutput.value !== null &&
+          rawOutput.value !== ''
+          ? rawOutput.value
+          : this.resolveFallbackOutput(selected, outputs, edges)
         : (rawOutput.answer ?? rawOutput.content ?? rawOutput);
     return { node: selected, value, outputs: terminalOutputs };
   }
 
   private toMessage(value: unknown) {
     return typeof value === 'string' ? value : JSON.stringify(value ?? null);
+  }
+
+  private resolveFallbackOutput(
+    node: WorkflowNode,
+    outputs: Map<string, NodeOutput>,
+    edges: WorkflowEdge[],
+  ): unknown {
+    const incomingEdges = edges.filter((edge) => edge.to === node.name);
+    const incomingNames = new Set(incomingEdges.map((e) => e.from));
+    const entries = Array.from(outputs.entries());
+
+    // 1. If there are incoming edges, take the most recently executed incoming node
+    if (incomingNames.size > 0) {
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const [name, output] = entries[i];
+        if (incomingNames.has(name)) {
+          return this.extractNodeResponse(output);
+        }
+      }
+    }
+
+    // 2. Otherwise, take the last ran node before this output node
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const [name, output] = entries[i];
+      if (name !== node.name) {
+        return this.extractNodeResponse(output);
+      }
+    }
+
+    return '';
+  }
+
+  private extractNodeResponse(output: NodeOutput | undefined): unknown {
+    if (!output) return '';
+    if (typeof output.answer === 'string' && output.answer.trim().length > 0) {
+      return output.answer;
+    }
+    if (
+      output.answer !== undefined &&
+      output.answer !== null &&
+      output.answer !== ''
+    ) {
+      return output.answer;
+    }
+    if (
+      typeof output.content === 'string' &&
+      output.content.trim().length > 0
+    ) {
+      return output.content;
+    }
+    if (
+      output.content !== undefined &&
+      output.content !== null &&
+      output.content !== ''
+    ) {
+      return output.content;
+    }
+    if (
+      typeof output.message === 'string' &&
+      output.message.trim().length > 0
+    ) {
+      return output.message;
+    }
+    if (output.message !== undefined && output.message !== null) {
+      return output.message;
+    }
+    if (output.value !== undefined && output.value !== null) {
+      return output.value;
+    }
+    return output;
   }
 
   private resolveValue(
@@ -282,6 +365,20 @@ export class WorkflowRuntimeService {
     reference: string,
     outputs: Map<string, NodeOutput>,
   ): unknown {
+    const trimmed = reference.trim();
+    if (
+      trimmed === 'last_output' ||
+      trimmed === 'last_node.output' ||
+      trimmed === 'last' ||
+      trimmed === 'lastNode.output'
+    ) {
+      const entries = Array.from(outputs.entries());
+      if (entries.length > 0) {
+        return this.extractNodeResponse(entries[entries.length - 1][1]);
+      }
+      return undefined;
+    }
+
     const marker = '.output.';
     const markerIndex = reference.indexOf(marker);
     if (markerIndex < 1) return undefined;

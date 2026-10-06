@@ -226,8 +226,15 @@ export class WorkflowService {
         `Condition node ${node.name} needs expression`,
       );
     }
-    if (node.type === 'output' && typeof node.value !== 'string') {
-      throw new BadRequestException(`Output node ${node.name} needs value`);
+    if (
+      node.type === 'output' &&
+      node.value !== undefined &&
+      node.value !== null &&
+      typeof node.value !== 'string'
+    ) {
+      throw new BadRequestException(
+        `Output node ${node.name} value must be a string`,
+      );
     }
   }
 

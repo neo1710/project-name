@@ -40,6 +40,9 @@ export interface WorkflowNode {
   settings?: Record<string, unknown>;
   expression?: string;
   value?: string;
+  action?: string;
+  code?: string;
+  parameters?: Record<string, unknown>;
 }
 
 export interface WorkflowEdge {

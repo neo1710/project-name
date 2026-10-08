@@ -2,7 +2,7 @@
 
 Base URL locally: `http://localhost:3000/workflows`.
 
-This is the single frontend contract for building, saving, and running workflow graphs. The initial runtime executes `prompt_agent` nodes and `knowledge_base_search` tools. MCP, HTTP, conditions, sandbox execution, and autonomous function calls remain intentionally unavailable until their dedicated runtimes are added.
+This is the single frontend contract for building, saving, and running workflow graphs. The runtime executes `prompt_agent` nodes, `sandbox_agent` nodes (isolated Python runner, CSV creation, synthetic data generation, statistical profiling, and querying), and `knowledge_base_search` tools. MCP, HTTP, conditions, and autonomous function calls remain reserved for future runtimes.
 
 ## Endpoints
 
@@ -36,6 +36,11 @@ type WorkflowNode = {
   model?: string;
   prompt?: string;
   tools?: string[];
+
+  // Sandbox agent specific fields
+  action?: 'execute_python' | 'create_synthetic_csv' | 'analyze_csv' | 'query_csv' | 'create_csv' | 'list_files';
+  code?: string;
+  parameters?: Record<string, unknown>;
 
   // Tool node fields
   tool?: 'knowledge_base_search' | 'knowledge_base_document_search' | 'rag' | 'http' | 'mcp';
@@ -89,7 +94,7 @@ Agent type is different from a specialised task such as RAG. It describes **how 
 | --- | --- | --- |
 | `prompt_agent` | Rewrite, summarize, classify, answer, or any prompt-only task | Does not autonomously invoke tools. |
 | `function_call_agent` | An agent that may select from allowed tool nodes | Runtime will expose only IDs listed in `tools`. |
-| `sandbox_agent` | Future isolated code/data task execution | Stored now, intentionally not executable yet. |
+| `sandbox_agent` | Isolated Python execution, synthetic data generation, CSV creation, statistical profiling, and querying | Dispatches to Sandbox Service (`POST /agent/run`). |
 
 For a simple RAG workflow, use a `prompt_agent` for rewriting and answering, plus an explicit `knowledge_base_search` tool. A future all-in-one `rag` tool is included in the palette but has not been implemented as an executor.
 
@@ -123,7 +128,18 @@ Load it when the workflow builder opens. Use it to construct the draggable palet
   "agentTypes": [
     { "type": "prompt_agent", "description": "Runs a configured prompt against the selected model." },
     { "type": "function_call_agent", "description": "Lets the model select and call approved tool nodes." },
-    { "type": "sandbox_agent", "description": "Reserved for isolated code or task execution." }
+    {
+      "type": "sandbox_agent",
+      "description": "Secure isolated Python code runner, CSV generator, statistical analyser, and query engine.",
+      "actions": [
+        { "action": "execute_python", "description": "Execute Python 3.12 scripts with pandas and numpy in an isolated sandbox." },
+        { "action": "create_synthetic_csv", "description": "Generate synthetic datasets (goals_and_milestones, sales_performance, etc.)." },
+        { "action": "analyze_csv", "description": "Statistical column profiling, IQR outlier detection, and Markdown report." },
+        { "action": "query_csv", "description": "SQL-like filtering, column projection, and sorting on CSV files." },
+        { "action": "create_csv", "description": "Create a CSV file from JSON record arrays." },
+        { "action": "list_files", "description": "List all input and output files available in the sandbox workspace." }
+      ]
+    }
   ],
   "toolTypes": [
     { "type": "knowledge_base_search", "kind": "built_in" },
@@ -438,7 +454,7 @@ When using an Output node:
 | --- | --- |
 | `agentType: "prompt_agent"` | Executes the rendered `prompt` using the node's Groq/Mistral provider and model. |
 | `agentType: "function_call_agent"` | Executes its rendered prompt as a model node. Autonomous model-selected tool calls are not enabled yet. Use explicit tool nodes in the graph. |
-| `agentType: "sandbox_agent"` | Returns `501 Not Implemented`. |
+| `agentType: "sandbox_agent"` | Executes isolated Python code, synthetic data generation, CSV profiling, or SQL-like querying via the Sandbox Service (`POST /agent/run`). Supports direct action/parameters, code execution, or AI prompt planning. |
 | `tool: "knowledge_base_search"` | Executes semantic search using the existing knowledge-base service and adds citations. |
 | `tool: "knowledge_base_document_search"`, `rag`, `http`, `mcp` | Returns `501 Not Implemented`. |
 | `condition` | Returns `501 Not Implemented`. |
@@ -492,9 +508,65 @@ Example validation response:
 }
 ```
 
-## MCP and sandbox UI behavior
+## Sandbox Agent configuration
 
-Show `mcp`, `http`, and `sandbox_agent` in the builder now, but mark them as unavailable for test runs until their runtime is implemented. They can be safely saved in workflow JSON today.
+`sandbox_agent` runs inside a secure, isolated Python 3.12 sandbox environment with `pandas` and `numpy`.
+
+Supported actions:
+1. `execute_python`: Execute Python code string with access to `/workspace/input` and `/workspace/output`.
+2. `create_synthetic_csv`: Generate realistic synthetic datasets (templates: `goals_and_milestones`, `sales_performance`, `user_analytics`, `timeseries_metrics`, `project_tasks`).
+3. `analyze_csv`: Compute full column statistics, IQR outlier anomalies, Pearson correlations, and Markdown reports.
+4. `query_csv`: SQL-like boolean expressions, sorting, and projection on CSVs.
+5. `create_csv`: Build CSV from structured JSON record arrays.
+6. `list_files`: Inspect files in `input/` and `output/`.
+
+### Example 1: Synthetic Data Generator Node
+```json
+{
+  "name": "Generate goals",
+  "type": "agent",
+  "agentType": "sandbox_agent",
+  "position": { "x": 300, "y": 150 },
+  "action": "create_synthetic_csv",
+  "parameters": {
+    "filename": "q3_goals.csv",
+    "template": "goals_and_milestones",
+    "row_count": 25,
+    "seed": 42
+  }
+}
+```
+
+### Example 2: Python Code Execution Node
+```json
+{
+  "name": "Analyze with Python",
+  "type": "agent",
+  "agentType": "sandbox_agent",
+  "position": { "x": 600, "y": 150 },
+  "action": "execute_python",
+  "parameters": {
+    "code": "import pandas as pd\ndf = pd.read_csv('output/q3_goals.csv')\nprint(df.groupby('priority')['progress_pct'].mean())"
+  }
+}
+```
+
+### Example 3: AI Prompt-Driven Sandbox Agent
+```json
+{
+  "name": "Data Scientist",
+  "type": "agent",
+  "agentType": "sandbox_agent",
+  "position": { "x": 600, "y": 150 },
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "prompt": "Analyze output/q3_goals.csv and find any goals that are behind schedule. Question: {{Question.output.message}}"
+}
+```
+
+## MCP and HTTP UI behavior
+
+Show `mcp` and `http` in the builder palette, but mark them as unavailable for test runs until their runtime executors are implemented. They can be safely saved in workflow JSON today.
 
 For a future MCP node, use only a server-side connection reference:
 

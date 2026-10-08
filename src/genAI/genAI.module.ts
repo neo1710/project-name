@@ -6,6 +6,7 @@ import { SonarApiTools } from './tools/sonarApiTools';
 import { KnowledgeBaseModule } from '../knowledge-base/knowledge-base.module';
 import { WorkflowModule } from '../workflows/workflow.module';
 import { WorkflowRuntimeService } from './workflow-runtime.service';
+import { SandboxService } from './sandbox.service';
 
 @Module({
   imports: [KnowledgeBaseModule, WorkflowModule],
@@ -14,7 +15,9 @@ import { WorkflowRuntimeService } from './workflow-runtime.service';
     chatAgents,
     SonarApiTools,
     WorkflowRuntimeService,
+    SandboxService,
   ],
   controllers: [GenAIController],
+  exports: [SandboxService],
 })
 export class GenAIModule {}

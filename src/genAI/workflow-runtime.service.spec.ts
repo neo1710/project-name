@@ -3,12 +3,14 @@ import { WorkflowRuntimeService } from './workflow-runtime.service';
 import { WorkflowService } from '../workflows/workflow.service';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 import { SonarModelChat } from './genAI.service';
+import { SandboxService } from './sandbox.service';
 
 describe('WorkflowRuntimeService', () => {
   let runtimeService: WorkflowRuntimeService;
   let workflowService: { findForExecution: jest.Mock };
   let knowledgeBaseService: { search: jest.Mock };
   let modelChat: { completeWorkflowPrompt: jest.Mock };
+  let sandboxService: { runAgentAction: jest.Mock };
 
   beforeEach(async () => {
     workflowService = {
@@ -20,6 +22,9 @@ describe('WorkflowRuntimeService', () => {
     modelChat = {
       completeWorkflowPrompt: jest.fn(),
     };
+    sandboxService = {
+      runAgentAction: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -27,6 +32,7 @@ describe('WorkflowRuntimeService', () => {
         { provide: WorkflowService, useValue: workflowService },
         { provide: KnowledgeBaseService, useValue: knowledgeBaseService },
         { provide: SonarModelChat, useValue: modelChat },
+        { provide: SandboxService, useValue: sandboxService },
       ],
     }).compile();
 
@@ -103,14 +109,18 @@ describe('WorkflowRuntimeService', () => {
       ],
     });
 
-    modelChat.completeWorkflowPrompt.mockResolvedValue('Agent answer with empty output value');
+    modelChat.completeWorkflowPrompt.mockResolvedValue(
+      'Agent answer with empty output value',
+    );
 
     const result = await runtimeService.run({
       workflowName: 'Test Workflow',
       messages: [{ role: 'user', content: 'Hi' }],
     });
 
-    expect(result.response.message).toBe('Agent answer with empty output value');
+    expect(result.response.message).toBe(
+      'Agent answer with empty output value',
+    );
     expect(result.response.outputs['OutputNode']).toEqual({
       value: 'Agent answer with empty output value',
     });
@@ -287,5 +297,185 @@ describe('WorkflowRuntimeService', () => {
       },
     });
   });
-});
 
+  it('executes sandbox_agent with explicit action and parameters', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-sandbox-1',
+      name: 'Sandbox Synthetic Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'GenerateData',
+          type: 'agent',
+          agentType: 'sandbox_agent',
+          action: 'create_synthetic_csv',
+          parameters: {
+            filename: 'goals.csv',
+            template: 'goals_and_milestones',
+            row_count: 25,
+          },
+          position: { x: 150, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'GenerateData' },
+        { from: 'GenerateData', to: 'OutputNode' },
+      ],
+    });
+
+    sandboxService.runAgentAction.mockResolvedValue({
+      success: true,
+      action: 'create_synthetic_csv',
+      summary: "Generated synthetic CSV 'goals.csv' (25 rows, 9 columns)",
+      result: {
+        filename: 'goals.csv',
+        relative_path: 'output/goals.csv',
+        row_count: 25,
+        column_count: 9,
+      },
+      files_created: ['output/goals.csv'],
+    });
+
+    const result = await runtimeService.run({
+      workflowName: 'Sandbox Synthetic Workflow',
+      messages: [{ role: 'user', content: 'Create data' }],
+    });
+
+    expect(sandboxService.runAgentAction).toHaveBeenCalledWith(
+      'create_synthetic_csv',
+      {
+        filename: 'goals.csv',
+        template: 'goals_and_milestones',
+        row_count: 25,
+      },
+    );
+    expect(result.response.message).toBe(
+      "Generated synthetic CSV 'goals.csv' (25 rows, 9 columns)",
+    );
+    expect(result.response.outputs['OutputNode']).toEqual({
+      value: "Generated synthetic CSV 'goals.csv' (25 rows, 9 columns)",
+    });
+  });
+
+  it('executes sandbox_agent with explicit Python code', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-sandbox-2',
+      name: 'Sandbox Python Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'PyRunner',
+          type: 'agent',
+          agentType: 'sandbox_agent',
+          code: 'print(2 + 2)',
+          position: { x: 150, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'PyRunner' },
+        { from: 'PyRunner', to: 'OutputNode' },
+      ],
+    });
+
+    sandboxService.runAgentAction.mockResolvedValue({
+      success: true,
+      action: 'execute_python',
+      summary: 'Python execution succeeded in 12ms.',
+      result: {
+        success: true,
+        exit_code: 0,
+        stdout: '4\n',
+        stderr: '',
+        execution_time_ms: 12.0,
+        output_files: [],
+      },
+      files_created: [],
+    });
+
+    const result = await runtimeService.run({
+      workflowName: 'Sandbox Python Workflow',
+      messages: [{ role: 'user', content: 'Compute' }],
+    });
+
+    expect(sandboxService.runAgentAction).toHaveBeenCalledWith(
+      'execute_python',
+      {
+        code: 'print(2 + 2)',
+      },
+    );
+    expect(result.response.message).toBe('4');
+  });
+
+  it('executes sandbox_agent with LLM-planned action when prompt is provided', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-sandbox-3',
+      name: 'Sandbox AI Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'AnalyzerAgent',
+          type: 'agent',
+          agentType: 'sandbox_agent',
+          provider: 'groq',
+          model: 'llama-3.3-70b-versatile',
+          prompt: 'Analyze sales data in sales.csv',
+          position: { x: 150, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'AnalyzerAgent' },
+        { from: 'AnalyzerAgent', to: 'OutputNode' },
+      ],
+    });
+
+    modelChat.completeWorkflowPrompt.mockResolvedValue(
+      JSON.stringify({
+        action: 'analyze_csv',
+        parameters: { filename: 'sales.csv' },
+      }),
+    );
+
+    sandboxService.runAgentAction.mockResolvedValue({
+      success: true,
+      action: 'analyze_csv',
+      summary: 'Analyzed sales.csv: 100 rows, 5 columns.',
+      result: {
+        source: 'sales.csv',
+        row_count: 100,
+        column_count: 5,
+        markdown_report: '# Sales Report\nAll metrics positive.',
+      },
+      files_created: [],
+    });
+
+    const result = await runtimeService.run({
+      workflowName: 'Sandbox AI Workflow',
+      messages: [{ role: 'user', content: 'Analyze sales' }],
+    });
+
+    expect(sandboxService.runAgentAction).toHaveBeenCalledWith('analyze_csv', {
+      filename: 'sales.csv',
+    });
+    expect(result.response.message).toBe(
+      '# Sales Report\nAll metrics positive.',
+    );
+  });
+});

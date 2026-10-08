@@ -6,6 +6,7 @@ import {
 import { randomUUID } from 'crypto';
 import { chat, conversations } from './dto/chatDto';
 import { SonarModelChat } from './genAI.service';
+import { SandboxService } from './sandbox.service';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 import { WorkflowService } from '../workflows/workflow.service';
 import { WorkflowEdge, WorkflowNode } from '../workflows/workflow.types';
@@ -26,6 +27,7 @@ export class WorkflowRuntimeService {
     private readonly workflows: WorkflowService,
     private readonly knowledgeBase: KnowledgeBaseService,
     private readonly modelChat: SonarModelChat,
+    private readonly sandbox: SandboxService,
   ) {}
 
   async run(body: chat) {
@@ -117,9 +119,7 @@ export class WorkflowRuntimeService {
 
     if (node.type === 'agent') {
       if (node.agentType === 'sandbox_agent') {
-        throw new NotImplementedException(
-          `Sandbox agent ${node.name} cannot run yet`,
-        );
+        return this.executeSandboxAgent(node, outputs, messages);
       }
       if (!node.prompt)
         throw new BadRequestException(
@@ -194,6 +194,223 @@ export class WorkflowRuntimeService {
     }
 
     throw new BadRequestException(`Unsupported node type: ${node.type}`);
+  }
+
+  private async executeSandboxAgent(
+    node: WorkflowNode,
+    outputs: Map<string, NodeOutput>,
+    messages: conversations[],
+  ): Promise<NodeOutput> {
+    const rawAction =
+      node.action ??
+      (node.settings?.action as string | undefined) ??
+      (node.input?.action as string | undefined);
+
+    const rawParameters =
+      node.parameters ??
+      (node.settings?.parameters as Record<string, unknown> | undefined) ??
+      (node.input?.parameters as Record<string, unknown> | undefined) ??
+      (node.input as Record<string, unknown> | undefined) ??
+      {};
+
+    const explicitCode =
+      node.code ??
+      (node.settings?.code as string | undefined) ??
+      (node.input?.code as string | undefined) ??
+      (rawParameters?.code as string | undefined);
+
+    let action = rawAction;
+    if (!action && explicitCode) {
+      action = 'execute_python';
+    }
+
+    const finalParams: Record<string, unknown> = { ...rawParameters };
+    if (explicitCode && !finalParams.code) {
+      finalParams.code = explicitCode;
+    }
+
+    // Case 1: Explicit action or explicit code is provided
+    if (action) {
+      const resolvedAction = String(
+        this.resolveValue(action, outputs),
+      ).trim();
+      const resolvedParams = this.resolveValue(
+        finalParams,
+        outputs,
+      ) as Record<string, unknown>;
+
+      const actionRes = await this.sandbox.runAgentAction(
+        resolvedAction,
+        resolvedParams,
+      );
+
+      let answerText = actionRes.summary;
+      if (resolvedAction === 'execute_python' && actionRes.result?.stdout) {
+        answerText = actionRes.result.stdout.trim() || actionRes.summary;
+      } else if (
+        resolvedAction === 'analyze_csv' &&
+        actionRes.result?.markdown_report
+      ) {
+        answerText = actionRes.result.markdown_report;
+      }
+
+      if (node.prompt && (node.provider || node.model)) {
+        try {
+          const prompt = this.resolveTemplate(node.prompt, outputs);
+          const synthesisPrompt = `The following action "${resolvedAction}" was executed in the sandbox environment:\n\nResult Summary: ${actionRes.summary}\n${
+            actionRes.result?.stdout
+              ? `Output:\n${actionRes.result.stdout}\n`
+              : ''
+          }${
+            actionRes.result?.markdown_report
+              ? `Report:\n${actionRes.result.markdown_report}\n`
+              : ''
+          }\nUser Instructions:\n${prompt}\n\nPlease provide a clear, helpful final response.`;
+
+          const synthesized = await this.modelChat.completeWorkflowPrompt({
+            provider: node.provider,
+            model: node.model,
+            prompt: synthesisPrompt,
+            messages,
+          });
+          if (synthesized && synthesized.trim()) {
+            answerText = synthesized.trim();
+          }
+        } catch {
+          // Fallback to answerText if model synthesis fails
+        }
+      }
+
+      return {
+        content: answerText,
+        answer: answerText,
+        summary: actionRes.summary,
+        action: actionRes.action,
+        success: actionRes.success,
+        result: actionRes.result,
+        files_created: actionRes.files_created,
+        agentType: 'sandbox_agent',
+        ...(typeof actionRes.result === 'object' && actionRes.result
+          ? actionRes.result
+          : {}),
+      };
+    }
+
+    // Case 2: No explicit action, but prompt is provided
+    if (node.prompt) {
+      const prompt = String(this.resolveTemplate(node.prompt, outputs));
+
+      // Check if prompt is directly python code (e.g. contains ```python or begins with import/def/print)
+      const pythonBlockMatch = prompt.match(
+        /```(?:python|py)?\s*([\s\S]*?)```/i,
+      );
+      const isDirectPython =
+        Boolean(pythonBlockMatch) ||
+        /^\s*(import\s+|from\s+\w+\s+import|def\s+|class\s+|print\()/m.test(
+          prompt,
+        );
+
+      if (isDirectPython) {
+        const codeToRun = (
+          pythonBlockMatch ? pythonBlockMatch[1] : prompt
+        ).trim();
+        const actionRes = await this.sandbox.runAgentAction('execute_python', {
+          code: codeToRun,
+        });
+
+        const answerText =
+          actionRes.result?.stdout?.trim() || actionRes.summary;
+
+        return {
+          content: answerText,
+          answer: answerText,
+          summary: actionRes.summary,
+          action: 'execute_python',
+          success: actionRes.success,
+          result: actionRes.result,
+          files_created: actionRes.files_created,
+          agentType: 'sandbox_agent',
+          ...(typeof actionRes.result === 'object' && actionRes.result
+            ? actionRes.result
+            : {}),
+        };
+      }
+
+      // Autonomous action selection via LLM
+      const systemPrompt = `You are an AI Sandbox Agent with access to an isolated Python and data analysis environment.
+Available actions in the sandbox:
+1. "execute_python": Run Python code. Parameters: { "code": string, "timeout_seconds"?: number }. Code runs Python 3.12 with pandas, numpy. Read/write files in 'output/' or 'input/'.
+2. "create_synthetic_csv": Generate synthetic CSV dataset. Parameters: { "filename": string, "template": "goals_and_milestones"|"sales_performance"|"user_analytics"|"timeseries_metrics"|"project_tasks", "row_count"?: number, "seed"?: number }.
+3. "analyze_csv": Statistical column profiling, outlier detection, and Markdown report. Parameters: { "filename": string, "generate_markdown_report"?: boolean }.
+4. "query_csv": Filter, project, and sort CSV data. Parameters: { "filename": string, "filter_expression"?: string, "columns"?: string[], "sort_by"?: string, "ascending"?: boolean, "save_result_to"?: string }.
+5. "create_csv": Create CSV from JSON records. Parameters: { "filename": string, "data": object[] }.
+6. "list_files": List files in workspace. Parameters: {}.
+
+Based on the user request, return a JSON object with "action" and "parameters".
+Example:
+{"action": "create_synthetic_csv", "parameters": {"filename": "q3_goals.csv", "template": "goals_and_milestones", "row_count": 25}}
+Or for code:
+{"action": "execute_python", "parameters": {"code": "import pandas as pd\\n..."}}
+
+Return ONLY valid JSON.`;
+
+      const planResponse = await this.modelChat.completeWorkflowPrompt({
+        provider: node.provider,
+        model: node.model,
+        prompt: `${systemPrompt}\n\nUser Request:\n${prompt}`,
+        messages,
+      });
+
+      const parsed = this.parseJson(planResponse);
+      const chosenAction =
+        typeof parsed?.action === 'string' ? parsed.action : 'execute_python';
+      const chosenParams = (
+        parsed?.parameters && typeof parsed.parameters === 'object'
+          ? parsed.parameters
+          : {}
+      ) as Record<string, unknown>;
+
+      if (chosenAction === 'execute_python' && !chosenParams.code) {
+        const codeMatch = planResponse.match(
+          /```(?:python|py)?\s*([\s\S]*?)```/i,
+        );
+        if (codeMatch) chosenParams.code = codeMatch[1].trim();
+        else if (parsed?.code && typeof parsed.code === 'string')
+          chosenParams.code = parsed.code;
+      }
+
+      const actionRes = await this.sandbox.runAgentAction(
+        chosenAction,
+        chosenParams,
+      );
+      let answerText = actionRes.summary;
+      if (chosenAction === 'execute_python' && actionRes.result?.stdout) {
+        answerText = actionRes.result.stdout.trim() || actionRes.summary;
+      } else if (
+        chosenAction === 'analyze_csv' &&
+        actionRes.result?.markdown_report
+      ) {
+        answerText = actionRes.result.markdown_report;
+      }
+
+      return {
+        content: answerText,
+        answer: answerText,
+        summary: actionRes.summary,
+        action: actionRes.action,
+        success: actionRes.success,
+        result: actionRes.result,
+        files_created: actionRes.files_created,
+        agentType: 'sandbox_agent',
+        ...(typeof actionRes.result === 'object' && actionRes.result
+          ? actionRes.result
+          : {}),
+      };
+    }
+
+    throw new BadRequestException(
+      `Sandbox agent ${node.name} needs an action, code, or prompt to run`,
+    );
   }
 
   private topologicalOrder(nodes: WorkflowNode[], edges: WorkflowEdge[]) {

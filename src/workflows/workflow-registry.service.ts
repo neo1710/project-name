@@ -85,6 +85,115 @@ export class WorkflowRegistryService {
                 'List all input and output files available in the sandbox workspace.',
               parameters: {},
             },
+            {
+              action: 'create_excel',
+              description:
+                'Create styled multi-sheet Excel file (.xlsx) with themes (corporate_blue, emerald, slate, violet, amber), column formatting, and automated formulas.',
+              parameters: {
+                filename: 'string (required)',
+                document_title: 'string (optional)',
+                theme:
+                  'corporate_blue | emerald | slate | violet | amber (optional, default: corporate_blue)',
+                sheets: 'array of sheet definitions (required)',
+              },
+            },
+            {
+              action: 'inspect_excel',
+              description:
+                'Inspect sheet names, dimensions, column names, and row previews of an Excel file.',
+              parameters: {
+                filename: 'string (required)',
+              },
+            },
+            {
+              action: 'analyze_excel',
+              description:
+                'Statistical column profiling and IQR anomaly detection on an Excel sheet.',
+              parameters: {
+                filename: 'string (required)',
+                sheet_name: 'string (optional)',
+              },
+            },
+            {
+              action: 'convert_excel_to_csv',
+              description:
+                'Extract a specific sheet from an Excel file and save it as a clean CSV.',
+              parameters: {
+                filename: 'string (required)',
+                sheet_name: 'string (optional)',
+                output_csv_filename: 'string (optional)',
+              },
+            },
+            {
+              action: 'create_word',
+              description:
+                'Create executive Microsoft Word document (.docx) with KPI cards, callout boxes, bulleted/numbered lists, and tables.',
+              parameters: {
+                filename: 'string (required)',
+                document_title: 'string (required)',
+                subtitle: 'string (optional)',
+                author: 'string (optional)',
+                theme:
+                  'corporate_blue | emerald | slate | violet | amber (optional, default: corporate_blue)',
+                sections: 'array of section definitions (required)',
+              },
+            },
+            {
+              action: 'inspect_word',
+              description:
+                'Extract headings, paragraph count, word count, and table structure from a Word document.',
+              parameters: {
+                filename: 'string (required)',
+              },
+            },
+            {
+              action: 'read_word',
+              description:
+                'Extract full text and embedded tables from a Word document formatted as clean Markdown.',
+              parameters: {
+                filename: 'string (required)',
+              },
+            },
+            {
+              action: 'extract_word_tables',
+              description:
+                'Extract all embedded tables from a Word document into structured JSON arrays.',
+              parameters: {
+                filename: 'string (required)',
+              },
+            },
+            {
+              action: 'run_skill',
+              description:
+                'Execute built-in or custom instructional skills (excel_kpi_dashboard, word_executive_report, word_goal_action_plan, excel_financial_tracker, data_clean_and_profile, custom_instruction_execution).',
+              parameters: {
+                skill_id: 'string (required)',
+                parameters: 'object (optional)',
+              },
+            },
+            {
+              action: 'list_skills',
+              description:
+                'List all available instructional skills (built-in and custom).',
+              parameters: {},
+            },
+            {
+              action: 'get_skill',
+              description:
+                'Retrieve schema and instructions for a specific skill.',
+              parameters: {
+                skill_id: 'string (required)',
+              },
+            },
+            {
+              action: 'read_file_raw',
+              description:
+                'Extract text/markdown from .docx, .xlsx, .csv, or .txt files.',
+              parameters: {
+                folder: 'input | output (required)',
+                filename: 'string (required)',
+              },
+            },
           ],
         },
       ],

@@ -193,6 +193,125 @@ Instructions:
     return data.choices?.[0]?.message?.content || '';
   }
 
+  /** Executes a workflow prompt node with real-time token streaming and returns the full text output. */
+  async completeWorkflowPromptStream(
+    input: {
+      provider?: 'groq' | 'mistral';
+      model?: string;
+      prompt: string;
+      messages: conversations[];
+    },
+    onChunk: (chunk: string) => void,
+  ): Promise<string> {
+    const provider =
+      input.provider ||
+      (input.model && KNOWN_GROQ_MODEL_IDS.has(input.model)
+        ? 'groq'
+        : 'mistral');
+    const messages = [
+      { role: 'system' as const, content: input.prompt },
+      ...input.messages.map((message) => ({
+        role: message.role as 'user' | 'assistant' | 'system',
+        content: message.content,
+      })),
+    ];
+
+    let fullText = '';
+
+    if (provider === 'groq') {
+      try {
+        const stream = await this.getGroqClient().chat.completions.create({
+          model: input.model || 'llama-3.3-70b-versatile',
+          messages: messages as ChatCompletionMessageParam[],
+          stream: true,
+        });
+
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content || '';
+          if (delta) {
+            fullText += delta;
+            onChunk(delta);
+          }
+        }
+        return fullText;
+      } catch (err) {
+        this.logger.warn(
+          `Groq streaming failed, falling back to synchronous completion: ${this.getErrorMessage(err)}`,
+        );
+        const fallbackText = await this.completeWorkflowPrompt(input);
+        if (fallbackText) onChunk(fallbackText);
+        return fallbackText;
+      }
+    }
+
+    const apiKey = this.getMistralApiKey();
+    if (!apiKey)
+      throw new Error('MISTRAL_API_KEY (or legacy MYSTRAL_API_KEY) is missing');
+
+    try {
+      const response = await fetch(this.sonarUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: input.model || 'mistral-small-latest',
+          messages,
+          stream: true,
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        const fallbackText = await this.completeWorkflowPrompt(input);
+        if (fallbackText) onChunk(fallbackText);
+        return fallbackText;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const dataStr = trimmed.slice(5).trim();
+            if (dataStr === '[DONE]' || !dataStr) continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              const delta = parsed.choices?.[0]?.delta?.content || '';
+              if (delta) {
+                fullText += delta;
+                onChunk(delta);
+              }
+            } catch {
+              // Ignore partial or non-json SSE lines
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      return fullText;
+    } catch (err) {
+      this.logger.warn(
+        `Mistral streaming failed, falling back to synchronous completion: ${this.getErrorMessage(err)}`,
+      );
+      const fallbackText = await this.completeWorkflowPrompt(input);
+      if (fallbackText) onChunk(fallbackText);
+      return fallbackText;
+    }
+  }
+
   // ✅ STREAMING CHAT (SSE)
   async chatStream(body: chat, res: any) {
     if ((await this.resolveProvider(body)) === 'groq') {

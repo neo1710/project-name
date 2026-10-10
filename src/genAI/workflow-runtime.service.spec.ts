@@ -9,8 +9,17 @@ describe('WorkflowRuntimeService', () => {
   let runtimeService: WorkflowRuntimeService;
   let workflowService: { findForExecution: jest.Mock };
   let knowledgeBaseService: { search: jest.Mock };
-  let modelChat: { completeWorkflowPrompt: jest.Mock };
-  let sandboxService: { runAgentAction: jest.Mock };
+  let modelChat: {
+    completeWorkflowPrompt: jest.Mock;
+    completeWorkflowPromptStream: jest.Mock;
+  };
+  let sandboxService: {
+    runAgentAction: jest.Mock;
+    streamPythonExecution: jest.Mock;
+    streamAgentAction: jest.Mock;
+    streamSkill: jest.Mock;
+    parseSseStream: jest.Mock;
+  };
 
   beforeEach(async () => {
     workflowService = {
@@ -21,9 +30,14 @@ describe('WorkflowRuntimeService', () => {
     };
     modelChat = {
       completeWorkflowPrompt: jest.fn(),
+      completeWorkflowPromptStream: jest.fn(),
     };
     sandboxService = {
       runAgentAction: jest.fn(),
+      streamPythonExecution: jest.fn(),
+      streamAgentAction: jest.fn(),
+      streamSkill: jest.fn(),
+      parseSseStream: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -476,6 +490,363 @@ describe('WorkflowRuntimeService', () => {
     });
     expect(result.response.message).toBe(
       '# Sales Report\nAll metrics positive.',
+    );
+  });
+
+  it('streams workflow events and token chunks for prompt agent via runStream', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-stream-1',
+      name: 'Streaming Prompt Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'PromptAgent',
+          type: 'agent',
+          agentType: 'prompt_agent',
+          prompt: 'Hello {{Input.output.message}}',
+          position: { x: 100, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'PromptAgent' },
+        { from: 'PromptAgent', to: 'OutputNode' },
+      ],
+    });
+
+    modelChat.completeWorkflowPromptStream.mockImplementation(
+      async (input: any, onChunk: (c: string) => void) => {
+        onChunk('Live ');
+        onChunk('stream ');
+        onChunk('response!');
+        return 'Live stream response!';
+      },
+    );
+
+    const writtenChunks: string[] = [];
+    const mockRes = {
+      setHeader: jest.fn(),
+      flushHeaders: jest.fn(),
+      flush: jest.fn(),
+      write: jest.fn((chunk: string) => {
+        writtenChunks.push(chunk);
+      }),
+      end: jest.fn(),
+    };
+
+    await runtimeService.runStream(
+      {
+        workflowName: 'Streaming Prompt Workflow',
+        messages: [{ role: 'user', content: 'World' }],
+        stream: true,
+      },
+      mockRes,
+    );
+
+    expect(mockRes.setHeader).toHaveBeenCalledWith(
+      'Content-Type',
+      'text/event-stream',
+    );
+    expect(mockRes.end).toHaveBeenCalled();
+
+    const fullOutput = writtenChunks.join('');
+    expect(fullOutput).toContain('event: workflow_start');
+    expect(fullOutput).toContain('event: node_start');
+    expect(fullOutput).toContain('event: token');
+    expect(fullOutput).toContain('"delta":"Live "');
+    expect(fullOutput).toContain('event: node_complete');
+    expect(fullOutput).toContain('event: workflow_complete');
+    expect(fullOutput).toContain('data: [DONE]');
+  });
+
+  it('streams sandbox execution events live for sandbox agent via runStream', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-stream-sandbox',
+      name: 'Streaming Sandbox Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'PySandbox',
+          type: 'agent',
+          agentType: 'sandbox_agent',
+          action: 'execute_python',
+          parameters: { code: 'print("Running calculation")' },
+          position: { x: 100, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'PySandbox' },
+        { from: 'PySandbox', to: 'OutputNode' },
+      ],
+    });
+
+    sandboxService.streamPythonExecution.mockResolvedValue({
+      ok: true,
+      body: {},
+    });
+
+    async function* mockSseGenerator() {
+      yield {
+        event: 'status',
+        data: '{"message":"Preparing sandbox environment"}',
+        parsed: { message: 'Preparing sandbox environment' },
+      };
+      yield {
+        event: 'stdout',
+        data: '{"line":"Running calculation"}',
+        parsed: { line: 'Running calculation' },
+      };
+      yield {
+        event: 'file_created',
+        data: '{"filename":"report.txt","relative_path":"output/report.txt"}',
+        parsed: {
+          filename: 'report.txt',
+          relative_path: 'output/report.txt',
+        },
+      };
+      yield {
+        event: 'complete',
+        data: '{"success":true,"summary":"Calculation finished successfully"}',
+        parsed: {
+          success: true,
+          summary: 'Calculation finished successfully',
+          output_files: ['output/report.txt'],
+        },
+      };
+    }
+
+    sandboxService.parseSseStream.mockImplementation(mockSseGenerator);
+
+    const writtenChunks: string[] = [];
+    const mockRes = {
+      setHeader: jest.fn(),
+      flushHeaders: jest.fn(),
+      flush: jest.fn(),
+      write: jest.fn((chunk: string) => {
+        writtenChunks.push(chunk);
+      }),
+      end: jest.fn(),
+    };
+
+    await runtimeService.runStream(
+      {
+        workflowName: 'Streaming Sandbox Workflow',
+        messages: [{ role: 'user', content: 'Calculate' }],
+        stream: true,
+      },
+      mockRes,
+    );
+
+    const fullOutput = writtenChunks.join('');
+    expect(fullOutput).toContain('event: stdout');
+    expect(fullOutput).toContain('Running calculation');
+    expect(fullOutput).toContain('event: file_created');
+    expect(fullOutput).toContain('output/report.txt');
+    expect(fullOutput).toContain('event: workflow_complete');
+    expect(fullOutput).toContain('data: [DONE]');
+  });
+
+  it('executes sandbox_agent with create_excel action', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-excel',
+      name: 'Excel Creation Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'ExcelGenerator',
+          type: 'agent',
+          agentType: 'sandbox_agent',
+          action: 'create_excel',
+          parameters: {
+            filename: 'Q3_Report.xlsx',
+            theme: 'emerald',
+            sheets: [
+              {
+                title: 'Revenue',
+                columns: ['Region', 'Actual'],
+                rows: [['North America', 120000]],
+              },
+            ],
+          },
+          position: { x: 100, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'ExcelGenerator' },
+        { from: 'ExcelGenerator', to: 'OutputNode' },
+      ],
+    });
+
+    sandboxService.runAgentAction.mockResolvedValue({
+      success: true,
+      action: 'create_excel',
+      summary: "Generated Excel workbook 'Q3_Report.xlsx' with 1 sheet(s)",
+      result: {
+        filename: 'Q3_Report.xlsx',
+        relative_path: 'output/Q3_Report.xlsx',
+        sheets: ['Revenue'],
+      },
+      files_created: ['output/Q3_Report.xlsx'],
+    });
+
+    const result = await runtimeService.run({
+      workflowName: 'Excel Creation Workflow',
+      messages: [{ role: 'user', content: 'Build spreadsheet' }],
+    });
+
+    expect(sandboxService.runAgentAction).toHaveBeenCalledWith('create_excel', {
+      filename: 'Q3_Report.xlsx',
+      theme: 'emerald',
+      sheets: [
+        {
+          title: 'Revenue',
+          columns: ['Region', 'Actual'],
+          rows: [['North America', 120000]],
+        },
+      ],
+    });
+    expect(result.response.message).toBe(
+      "Generated Excel workbook 'Q3_Report.xlsx' with 1 sheet(s)",
+    );
+  });
+
+  it('executes sandbox_agent with create_word action', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-word',
+      name: 'Word Creation Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'WordGenerator',
+          type: 'agent',
+          agentType: 'sandbox_agent',
+          action: 'create_word',
+          parameters: {
+            filename: 'Review.docx',
+            document_title: 'Executive Review',
+            sections: [
+              {
+                heading: 'Summary',
+                paragraphs: ['All OK'],
+              },
+            ],
+          },
+          position: { x: 100, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'WordGenerator' },
+        { from: 'WordGenerator', to: 'OutputNode' },
+      ],
+    });
+
+    sandboxService.runAgentAction.mockResolvedValue({
+      success: true,
+      action: 'create_word',
+      summary: "Created Word document 'Review.docx' with 1 sections",
+      result: {
+        filename: 'Review.docx',
+        relative_path: 'output/Review.docx',
+      },
+      files_created: ['output/Review.docx'],
+    });
+
+    const result = await runtimeService.run({
+      workflowName: 'Word Creation Workflow',
+      messages: [{ role: 'user', content: 'Generate document' }],
+    });
+
+    expect(sandboxService.runAgentAction).toHaveBeenCalledWith('create_word', {
+      filename: 'Review.docx',
+      document_title: 'Executive Review',
+      sections: [
+        {
+          heading: 'Summary',
+          paragraphs: ['All OK'],
+        },
+      ],
+    });
+    expect(result.response.message).toBe(
+      "Created Word document 'Review.docx' with 1 sections",
+    );
+  });
+
+  it('executes sandbox_agent with run_skill action', async () => {
+    workflowService.findForExecution.mockResolvedValue({
+      workflowId: 'wf-skill',
+      name: 'Skill Workflow',
+      version: 1,
+      nodes: [
+        { name: 'Input', type: 'input', position: { x: 0, y: 0 } },
+        {
+          name: 'SkillRunner',
+          type: 'agent',
+          agentType: 'sandbox_agent',
+          action: 'run_skill',
+          parameters: {
+            skill_id: 'excel_kpi_dashboard',
+            filename: 'Dashboard.xlsx',
+          },
+          position: { x: 100, y: 0 },
+        },
+        {
+          name: 'OutputNode',
+          type: 'output',
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [
+        { from: 'Input', to: 'SkillRunner' },
+        { from: 'SkillRunner', to: 'OutputNode' },
+      ],
+    });
+
+    sandboxService.runAgentAction.mockResolvedValue({
+      success: true,
+      action: 'run_skill',
+      summary: "Executed skill 'excel_kpi_dashboard' successfully",
+      result: {
+        skill_id: 'excel_kpi_dashboard',
+        output_files: ['output/Dashboard.xlsx'],
+        summary: 'KPI Dashboard created with summary cards and charts',
+      },
+      files_created: ['output/Dashboard.xlsx'],
+    });
+
+    const result = await runtimeService.run({
+      workflowName: 'Skill Workflow',
+      messages: [{ role: 'user', content: 'Build KPI dashboard' }],
+    });
+
+    expect(sandboxService.runAgentAction).toHaveBeenCalledWith('run_skill', {
+      skill_id: 'excel_kpi_dashboard',
+      filename: 'Dashboard.xlsx',
+    });
+    expect(result.response.message).toBe(
+      'KPI Dashboard created with summary cards and charts',
     );
   });
 });
